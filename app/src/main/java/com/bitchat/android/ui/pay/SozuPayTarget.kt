@@ -122,6 +122,18 @@ fun parseUsdcMinor(raw: String): Long? {
     return whole * 10_000_000L + frac
 }
 
+/** USDC fields from dev.sozu.capital `/api/wallet/stellar/balance`. */
+fun usdcMinorFromBalanceJson(text: String): Long? {
+    var best: Long? = null
+    for (match in BALANCE_FIELD.findAll(text)) {
+        val minor = parseUsdcMinor(match.groupValues[2]) ?: continue
+        if (best == null || minor > best) best = minor
+    }
+    return best
+}
+
+private val BALANCE_FIELD = Regex("\"(usdcBalance|displayWalletUsdc|sorobanSacUsdcBalance)\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)")
+
 fun shortAddress(address: String): String {
     if (address.length <= 12) return address
     return address.take(4) + "…" + address.takeLast(4)

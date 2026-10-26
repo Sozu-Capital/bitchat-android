@@ -3,6 +3,13 @@ package com.bitchat.android.ui.pay
 import java.math.BigInteger
 import java.security.SecureRandom
 
+data class SozuChequeView(
+    val noteId: String,
+    val amount: Long,
+    val payee: ByteArray,
+    val owner: ByteArray,
+)
+
 /** SOZU1 cheque body. 179 bytes. Signature is not part of the hash. */
 object SozuCheque {
     const val BODY_BYTES = 179
@@ -49,6 +56,31 @@ object SozuCheque {
     fun randomNoteId(): ByteArray = ByteArray(16).also { SecureRandom().nextBytes(it) }
 
     fun frame(wire: ByteArray): String = "SOZU1:" + base64Url(wire)
+
+    /** Amount, payee, and owner from a cheque the mesh already delivered. */
+    fun read(frame: String): SozuChequeView? {
+        val raw = frame.trim()
+        if (!raw.startsWith("SOZU1:")) return null
+        val wire = try {
+            java.util.Base64.getUrlDecoder().decode(raw.removePrefix("SOZU1:"))
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
+        if (wire.size < BODY_BYTES) return null
+        val noteId = noteKey(wire.copyOfRange(34, 50)) ?: return null
+        return SozuChequeView(
+            noteId = noteId,
+            amount = readU64(wire, 50),
+            payee = wire.copyOfRange(82, 114),
+            owner = wire.copyOfRange(114, 146),
+        )
+    }
+
+    private fun readU64(body: ByteArray, offset: Int): Long {
+        var v = 0L
+        for (i in 7 downTo 0) v = (v shl 8) or (body[offset + i].toLong() and 0xff)
+        return v
+    }
 
     fun lowS(raw: ByteArray): ByteArray {
         require(raw.size == 64)

@@ -89,6 +89,16 @@ class SozuBookTest {
     }
 
     @Test
+    fun aSentChequeShowsInTheLedger() {
+        val book = SozuBook.open(0L)
+        val note = ByteArray(16) { 3 }
+        book.sent(note, 2L * usdc, fee, "SOZU1:wire")
+        assertEquals(1, book.payments().size)
+        assertEquals(2L * usdc, book.payments().first().amount)
+        assertEquals("pending", book.payments().first().state)
+    }
+
+    @Test
     fun theBookRoundTrips() {
         val book = SozuBook.open(5L * usdc)
         val note = ByteArray(16) { 8 }
@@ -105,5 +115,6 @@ class SozuBookTest {
         assertEquals("note-used", sozuUploadReason("""{"error":"Vault rejected","reason":"note-used"}""", false, null))
         assertEquals("collateral", sozuUploadReason("collateral short", false, null))
         assertEquals("rejected", sozuUploadReason("Vault rejected the cheque.", false, null))
+        assertEquals("passkey", sozuUploadReason("""{"error":"Confirm this settlement with your passkey.","reason":"passkey"}""", false, null))
     }
 }

@@ -5,10 +5,11 @@ import android.content.Context
 import java.security.MessageDigest
 
 /**
- * USDC on Sozu is held by the web passkey account.
- * A linked phone spends as that address. Until a link arrives, the phone
+ * The passkey wallet on dev.sozu.capital and the offline vault are two accounts
+ * for the same person. The wallet holds the USDC. The vault holds the collateral
+ * that can be spent offline. A linked phone names the passkey account as the
+ * cheque owner. The device key still signs. Until a link arrives, the phone
  * announces a C address derived from its device key.
- * A classic G account is still accepted from a peer.
  */
 object SozuWallet {
     @Volatile
@@ -32,7 +33,7 @@ object SozuWallet {
         return account
     }
 
-    /** The phone spends as this web passkey account. The device key still signs cheques. */
+    /** Remembers the passkey wallet that can fund the vault. The device key still signs cheques. */
     fun useWebWallet(context: Context, address: String) {
         context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE)
             .edit()

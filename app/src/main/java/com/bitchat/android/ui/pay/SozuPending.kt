@@ -17,6 +17,7 @@ data class FlushReport(val hash: String?, val uploads: List<SozuUpload>)
 object SozuPending {
     private const val ENDPOINT = "https://dev.sozu.capital/api/offline/submit"
     private const val RESOLVE = "https://dev.sozu.capital/api/wallet/resolve-recipient"
+    private const val BALANCE = "https://dev.sozu.capital/api/wallet/stellar/balance?publicKey="
 
     fun remember(context: Context, frame: String) {
         val text = frame.trim()
@@ -57,13 +58,32 @@ object SozuPending {
             uploads.add(upload)
             if (upload.reason == "settled" && upload.hash != null) {
                 hash = upload.hash
-            } else if (upload.reason == "rejected") {
+            } else if (upload.reason == "rejected" || upload.reason == "passkey") {
                 left.put(frame)
             }
         }
         prefs.edit().putString("pending", left.toString()).apply()
         Log.i("SozuPay", "flush uploads=${uploads.size} left=${left.length()} hash=${hash ?: "-"}")
         return FlushReport(hash, uploads)
+    }
+
+    /** USDC on the same passkey account dev.sozu.capital shows. Null when the phone cannot read it. */
+    fun fetchBalanceMinor(address: String): Long? {
+        if (!isValidStellarAddress(address)) return null
+        val connection = (URL(BALANCE + address).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8000
+            readTimeout = 8000
+            setRequestProperty("Accept", "application/json")
+        }
+        return try {
+            if (connection.responseCode !in 200..299) return null
+            usdcMinorFromBalanceJson(connection.inputStream.bufferedReader().readText())
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
     }
 
     fun resolveTag(tag: String): String? {

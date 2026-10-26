@@ -39,6 +39,17 @@ class SozuBook(
         return Reserve.Ok
     }
 
+    /** Records a signed cheque so it shows in the ledger even when the offline cap is unset. */
+    fun sent(noteId: ByteArray, amount: Long, fee: Long, frame: String) {
+        val id = noteKey(noteId) ?: return
+        val index = holds.indexOfFirst { it.id == id }
+        if (index < 0) {
+            holds.add(Hold(id, amount, fee, frame, PENDING))
+        } else {
+            holds[index] = holds[index].copy(amount = amount, fee = fee, frame = frame)
+        }
+    }
+
     fun attach(noteId: ByteArray, frame: String) {
         val id = noteKey(noteId) ?: return
         val index = holds.indexOfFirst { it.id == id && it.state == PENDING }
@@ -52,6 +63,8 @@ class SozuBook(
     }
 
     fun holdId(frame: String): String? = holds.firstOrNull { it.frame == frame }?.id
+
+    fun payments(): List<Hold> = holds.toList()
 
     fun pendingFrames(): List<String> = holds.mapNotNull { hold ->
         hold.frame?.takeIf { hold.state == PENDING }
@@ -128,7 +141,7 @@ fun noteKey(noteId: ByteArray): String? {
 fun sozuUploadReason(body: String, ok: Boolean, hash: String?): String {
     val lower = body.lowercase()
     val tagged = REASON.find(lower)?.groupValues?.get(1)
-    if (tagged == "note-used" || tagged == "collateral") return tagged
+    if (tagged == "note-used" || tagged == "collateral" || tagged == "passkey") return tagged
     if (lower.contains("note-used") || lower.contains("note_used") || lower.contains("note already used")) {
         return "note-used"
     }
@@ -137,9 +150,51 @@ fun sozuUploadReason(body: String, ok: Boolean, hash: String?): String {
     return "rejected"
 }
 
-private val REASON = Regex("\"reason\"\\s*:\\s*\"(note-used|collateral|settled|rejected)\"")
+private val REASON = Regex("\"reason\"\\s*:\\s*\"(note-used|collateral|settled|rejected|passkey)\"")
+
+data class SozuLedgerRow(
+    val id: String,
+    val amount: Long,
+    val incoming: Boolean,
+    val who: String,
+    val state: String,
+)
+
+object SozuInbox {
+    fun remember(context: Context, frame: String, ownerAddress: String): Boolean {
+        val view = SozuCheque.read(frame) ?: return false
+        val mine = StellarStrKey.accountId(ownerAddress) ?: return false
+        if (!view.payee.contentEquals(mine) || view.owner.contentEquals(mine)) return false
+        val who = StellarStrKey.encodeContract(view.owner)
+        val prefs = context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE)
+        val current = prefs.getString("inbox", "").orEmpty().lineSequence().filter { it.isNotBlank() }.toMutableList()
+        if (current.any { it.startsWith("${view.noteId}|") }) return false
+        current.add(0, "${view.noteId}|${view.amount}|$who|pending")
+        prefs.edit().putString("inbox", current.take(40).joinToString("\n")).apply()
+        return true
+    }
+
+    fun list(context: Context): List<SozuLedgerRow> {
+        val raw = context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE).getString("inbox", "").orEmpty()
+        return raw.lineSequence().mapNotNull { line ->
+            val parts = line.split("|", limit = 4)
+            if (parts.size != 4) return@mapNotNull null
+            val amount = parts[1].toLongOrNull() ?: return@mapNotNull null
+            SozuLedgerRow(parts[0], amount, true, parts[2], parts[3])
+        }.toList()
+    }
+}
 
 object SozuLedger {
+    fun rows(context: Context, book: SozuBook, owner: String): List<SozuLedgerRow> {
+        val outgoing = book.payments().asReversed().map { hold ->
+            val who = hold.frame?.let(SozuCheque::read)?.let { StellarStrKey.encodeContract(it.payee) }.orEmpty()
+            SozuLedgerRow(hold.id, hold.amount, false, who, hold.state)
+        }
+        val seen = outgoing.map { it.id }.toSet()
+        return outgoing + SozuInbox.list(context).filter { it.id !in seen }
+    }
+
     fun load(context: Context): SozuBook {
         val raw = context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE).getString("book", null)
         return SozuBook.import(raw)

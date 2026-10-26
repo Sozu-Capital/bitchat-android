@@ -72,6 +72,31 @@ class SozuChequeTest {
     }
 
     @Test
+    fun aChequeRemembersWhoWasPaid() {
+        val body = SozuCheque.encodeBody(
+            vault = ByteArray(32) { 9 },
+            noteId = ByteArray(16) { 4 },
+            amount = 2_880_000L,
+            fee = SozuCheque.DEMO_FEE,
+            cap = 2_880_000L,
+            expirySeconds = 1L,
+            payee = ByteArray(32) { 5 },
+            owner = ByteArray(32) { 6 },
+            deviceKey = ByteArray(33) { 7 },
+        )
+        val view = SozuCheque.read(SozuCheque.frame(body))
+        assertEquals(2_880_000L, view?.amount)
+        assertEquals(true, view?.payee?.contentEquals(ByteArray(32) { 5 }))
+    }
+
+    @Test
+    fun theDevWalletBalanceIsTheSameUsdcFigure() {
+        val text = """{"usdcBalance":0,"displayWalletUsdc":10.5,"sorobanSacUsdcBalance":10.5}"""
+        assertEquals(105_000_000L, usdcMinorFromBalanceJson(text))
+        assertEquals(null, usdcMinorFromBalanceJson("{}"))
+    }
+
+    @Test
     fun aWebWalletLinkCarriesTheFaucetBalance() {
         val raw = "sozu://link?addr=CAMVPBC6XL42KGHQPOLBBZ5EKIHER3DCNY2FRZH677JS2KWH4RNILEJH&tag=daniloco&usdc=10"
         val link = parseSozuLink(raw)

@@ -4,8 +4,10 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.Uri
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -76,6 +79,7 @@ fun SozuPayScreen(
     val announced = remember { mutableSetOf<String>() }
 
     var digits by remember { mutableStateOf("") }
+    var depositDigits by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<String?>(null) }
     var payee by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -84,6 +88,8 @@ fun SozuPayScreen(
     var sending by remember { mutableStateOf(false) }
     val book = remember { SozuLedger.load(context) }
     var left by remember { mutableStateOf(book.remaining()) }
+    var ledgerTick by remember { mutableStateOf(0) }
+    var balanceMinor by remember { mutableStateOf(prefs.getLong("balance-minor", -1L).takeIf { it >= 0L }) }
 
     val cents = centsFromDigits(digits)
     val ownerOk = owner.takeIf(::isValidStellarAddress)
@@ -95,6 +101,7 @@ fun SozuPayScreen(
     fun persistBook() {
         left = book.remaining()
         SozuLedger.save(context, book)
+        ledgerTick += 1
     }
 
     fun showFlush(report: FlushReport) {
@@ -107,7 +114,27 @@ fun SozuPayScreen(
         when {
             report.uploads.any { it.reason == "note-used" } -> error = "Note already used"
             report.uploads.any { it.reason == "collateral" } -> error = "Over your offline limit"
-            report.hash != null -> status = "Submitted. dev.sozu.capital/offline"
+            report.hash != null -> status = "Submitted."
+            report.uploads.any { it.reason == "passkey" } -> {
+                val frame = report.uploads.first { it.reason == "passkey" }.frame
+                status = "Confirm with your passkey."
+                runCatching {
+                    context.startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://dev.sozu.capital/offline?frame=${Uri.encode(frame)}"),
+                        ),
+                    )
+                }
+            }
+            report.uploads.any { it.reason == "rejected" } -> error = "Signed. The upload did not finish."
+        }
+        if (report.hash != null && isValidStellarAddress(owner)) {
+            scope.launch {
+                val minor = withContext(Dispatchers.IO) { SozuPending.fetchBalanceMinor(owner) } ?: return@launch
+                prefs.edit().putLong("balance-minor", minor).apply()
+                balanceMinor = minor
+            }
         }
     }
 
@@ -157,9 +184,15 @@ fun SozuPayScreen(
             myTag = linkedTag
             viewModel.setNickname(linkedTag)
         }
-        if (link.minor > 0L) book.adopt(link.minor)
-        persistBook()
-        status = "Linked ${shortAddress(link.address)}. Offline limit ${formatMinorUnits(link.minor)}. Your passkey on dev.sozu.capital still signs the vault deposit."
+        if (link.minor > 0L) {
+            depositDigits = (link.minor / 100_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toString()
+        }
+        status = "Sozu wallet linked. Deposit an amount into offline."
+        scope.launch {
+            val minor = withContext(Dispatchers.IO) { SozuPending.fetchBalanceMinor(link.address) } ?: return@launch
+            prefs.edit().putLong("balance-minor", minor).apply()
+            balanceMinor = minor
+        }
         error = null
     }
 
@@ -179,6 +212,9 @@ fun SozuPayScreen(
         fun learn(peerId: String?, content: String) {
             content.lineSequence().firstOrNull { it.startsWith("SOZU1:") }?.let { frame ->
                 SozuPending.remember(context, frame)
+                if (isValidStellarAddress(owner) && SozuInbox.remember(context, frame, owner)) {
+                    ledgerTick += 1
+                }
             }
             if (peerId.isNullOrBlank() || peerId == mine) return
             val address = SozuWallet.addressFromMeshText(content)
@@ -250,10 +286,53 @@ fun SozuPayScreen(
         return
     }
 
+    LaunchedEffect(owner) {
+        if (!isValidStellarAddress(owner) || !SozuPending.online(context)) return@LaunchedEffect
+        val minor = withContext(Dispatchers.IO) { SozuPending.fetchBalanceMinor(owner) } ?: return@LaunchedEffect
+        prefs.edit().putLong("balance-minor", minor).apply()
+        balanceMinor = minor
+    }
+
     if (selected == null) {
-        PeopleHome(
+        LedgerHome(
             owner = owner,
             tag = myTag,
+            offlineMinor = remember(ledgerTick) { book.remaining() },
+            walletMinor = balanceMinor,
+            depositDigits = depositDigits,
+            onDepositDigit = { key ->
+                depositDigits = when (key) {
+                    "del" -> depositDigits.dropLast(1)
+                    "100" -> "100"
+                    "500" -> "500"
+                    "1000" -> "1000"
+                    else -> if (key.length == 1 && depositDigits.length < 8) depositDigits + key else depositDigits
+                }
+                status = null
+                error = null
+            },
+            onDeposit = {
+                val minor = SozuCheque.usdcMinor(centsFromDigits(depositDigits))
+                val wallet = balanceMinor
+                when {
+                    minor <= 0L -> error = "Enter an amount to deposit"
+                    wallet != null && minor > wallet -> error = "That is more than your Sozu wallet"
+                    else -> {
+                        book.collateral = minor
+                        persistBook()
+                        depositDigits = ""
+                        error = null
+                        status = "Offline limit is ${formatMinorUnits(minor)}. Confirm this deposit from your Sozu wallet."
+                        val url = "https://dev.sozu.capital/offline?deposit=${formatMinorUnits(minor)}"
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }
+                    }
+                }
+            },
+            payments = remember(ledgerTick, owner) { SozuLedger.rows(context, book, owner) },
+            note = error ?: status,
+            noteIsError = error != null,
             peers = peers,
             names = names,
             onOpenChat = onOpenChat,
@@ -326,7 +405,7 @@ fun SozuPayScreen(
                 },
         )
         Text(
-            text = if (capped) "${formatMinorUnits(left)} left offline" else "No offline balance yet",
+            text = balanceMinor?.let { "${formatMinorUnits(it)} USDC" } ?: "Balance unavailable",
             color = Color.White.copy(alpha = 0.45f),
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
@@ -364,29 +443,6 @@ fun SozuPayScreen(
                         }
                     }
                 }
-            }
-        }
-        if (!capped || cents > 0) {
-            TextButton(
-                onClick = {
-                    val minor = SozuCheque.usdcMinor(cents)
-                    if (minor <= 0L) {
-                        error = "Enter an amount to lock"
-                        return@TextButton
-                    }
-                    book.lock(minor)
-                    persistBook()
-                    digits = ""
-                    error = null
-                    status = "${formatMinorUnits(minor)} locked on this phone"
-                },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            ) {
-                Text(
-                    text = if (cents > 0) "Lock ${formatCents(cents)} offline" else "Lock offline balance",
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 14.sp,
-                )
             }
         }
         TextButton(
@@ -438,7 +494,7 @@ fun SozuPayScreen(
                             deviceKey = signer.compressedPublicKey(),
                         )
                         val frame = SozuCheque.frame(body + signer.sign(body))
-                        book.attach(noteId, frame)
+                        book.sent(noteId, amount, fee, frame)
                         persistBook()
                         viewModel.sendToPeer(peerId, frame) { accepted ->
                             sending = false
@@ -446,12 +502,17 @@ fun SozuPayScreen(
                                 SozuSendHaptic.finish(context)
                                 SozuPending.remember(context, frame)
                                 digits = ""
-                                status = "Cheque signed. It leaves when a phone is online."
+                                selected = null
                                 error = null
                                 Log.i("SozuPay", "mesh accepted note=${noteKey(noteId)} left=${book.remaining()}")
-                                scope.launch {
-                                    val report = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
-                                    showFlush(report)
+                                if (SozuPending.online(context)) {
+                                    status = "Uploading…"
+                                    scope.launch {
+                                        val report = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
+                                        showFlush(report)
+                                    }
+                                } else {
+                                    status = "Saved on this phone. It uploads when this phone is online."
                                 }
                             } else {
                                 book.release(noteId)
@@ -494,16 +555,24 @@ fun SozuPayScreen(
 }
 
 @Composable
-private fun PeopleHome(
+private fun LedgerHome(
     owner: String,
     tag: String,
+    offlineMinor: Long,
+    walletMinor: Long?,
+    depositDigits: String,
+    onDepositDigit: (String) -> Unit,
+    onDeposit: () -> Unit,
+    payments: List<SozuLedgerRow>,
+    note: String?,
+    noteIsError: Boolean,
     peers: List<String>,
     names: Map<String, String>,
     onOpenChat: () -> Unit,
     onPick: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    Column(modifier = Modifier.sozuFrame()) {
+    Column(modifier = Modifier.sozuFrame().verticalScroll(rememberScrollState())) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 8.dp),
@@ -516,27 +585,122 @@ private fun PeopleHome(
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = if (tag.isNotBlank()) "$$tag" else shortAddress(owner),
+                text = if (tag.isNotBlank()) "$$tag" else "",
                 color = Color.White.copy(alpha = 0.45f),
                 fontSize = 12.sp,
             )
             TextButton(onClick = onOpenChat) { Text("Chat", color = Color.White.copy(alpha = 0.4f)) }
         }
         Text(
-            text = if (owner.isBlank()) "Wallet not ready" else "Your wallet ${shortAddress(owner)}",
-            color = Color.White.copy(alpha = 0.55f),
+            text = formatMinorUnits(offlineMinor),
+            color = Color.White,
+            fontSize = 48.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 28.dp),
+        )
+        Text(
+            text = "Offline",
+            color = Color.White.copy(alpha = 0.45f),
             fontSize = 13.sp,
-            modifier = Modifier.padding(top = 18.dp).clickable {
+        )
+        Text(
+            text = if (owner.isBlank()) "Open your Sozu wallet on dev.sozu.capital" else "Wallet ${shortAddress(owner)}",
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 14.sp,
+            modifier = Modifier.padding(top = 12.dp).clickable {
                 if (owner.isNotBlank()) copyWallet(context, owner)
             },
         )
         Text(
-            text = if (peers.isEmpty()) "Looking for people nearby" else "Tap someone to pay",
+            text = walletMinor?.let { "${formatMinorUnits(it)} USDC in your Sozu wallet" } ?: "Sozu wallet balance unavailable",
+            color = Color.White.copy(alpha = 0.45f),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+        Text(
+            text = formatCents(centsFromDigits(depositDigits)),
+            color = Color.White,
+            fontSize = 32.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 20.dp),
+        )
+        Text(
+            text = "Deposit from your Sozu wallet into offline",
+            color = Color.White.copy(alpha = 0.45f),
+            fontSize = 13.sp,
+        )
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            listOf("100" to "1", "500" to "5", "1000" to "10", "del" to "⌫").forEach { (key, label) ->
+                TextButton(onClick = { onDepositDigit(key) }, modifier = Modifier.weight(1f)) {
+                    Text(label, color = Color.White, fontSize = 18.sp)
+                }
+            }
+        }
+        TextButton(
+            onClick = onDeposit,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+                .background(Color.White, RoundedCornerShape(28.dp)),
+        ) {
+            Text(
+                text = "Deposit into offline",
+                color = Color.Black,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(vertical = 6.dp),
+            )
+        }
+        if (note != null) {
+            Text(
+                text = note,
+                color = if (noteIsError) Color(0xFFC4552A) else Color.White.copy(alpha = 0.7f),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+        Text(
+            text = "Payments",
             color = Color.White,
             fontSize = 22.sp,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 12.dp, bottom = 20.dp),
+            modifier = Modifier.padding(top = 28.dp, bottom = 8.dp),
         )
+        if (payments.isEmpty()) {
+            Text("No payments yet", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp)
+        }
+        payments.forEach { row ->
+            val who = row.who.takeIf(::isValidStellarAddress)?.let(::shortAddress) ?: "Someone"
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (row.incoming) "From $who" else "To $who",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                    )
+                    Text(
+                        text = paymentState(row.state),
+                        color = Color.White.copy(alpha = 0.45f),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Text(formatMinorUnits(row.amount), color = Color.White, fontSize = 16.sp)
+            }
+        }
+        Text(
+            text = "Pay",
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 24.dp, bottom = 12.dp),
+        )
+        if (peers.isEmpty()) {
+            Text("Looking for people nearby", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp)
+        }
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
@@ -548,16 +712,22 @@ private fun PeopleHome(
                     modifier = Modifier.padding(end = 18.dp).clickable { onPick(peerId) },
                 ) {
                     Box(
-                        modifier = Modifier.size(76.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)),
+                        modifier = Modifier.size(64.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(label.take(1).uppercase(), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
+                        Text(label.take(1).uppercase(), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Text(label.take(12), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
                 }
             }
         }
     }
+}
+
+private fun paymentState(state: String): String = when (state) {
+    "settled" -> "Settled"
+    "used" -> "Already used"
+    else -> "Pending"
 }
 
 private fun copyWallet(context: Context, address: String) {
