@@ -8,11 +8,17 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
@@ -41,6 +47,7 @@ import com.bitchat.android.onboarding.PermissionExplanationScreen
 import com.bitchat.android.onboarding.PermissionManager
 import com.bitchat.android.ui.ChatScreen
 import com.bitchat.android.ui.ChatViewModel
+import com.bitchat.android.ui.pay.SozuPayScreen
 import com.bitchat.android.ui.OrientationAwareActivity
 import com.bitchat.android.ui.theme.BitchatTheme
 import com.bitchat.android.wifiaware.WifiAwareController
@@ -313,24 +320,36 @@ class MainActivity : OrientationAwareActivity() {
             }
 
             OnboardingState.CHECKING, OnboardingState.INITIALIZING, OnboardingState.COMPLETE -> {
-                // Set up back navigation handling for the chat screen
-                val backCallback = object : OnBackPressedCallback(true) {
-                    override fun handleOnBackPressed() {
-                        // Let ChatViewModel handle navigation state
-                        val handled = chatViewModel.handleBackPressed()
-                        if (!handled) {
-                            // If ChatViewModel doesn't handle it, disable this callback
-                            // and let the system handle it (which will exit the app)
-                            this.isEnabled = false
-                            onBackPressedDispatcher.onBackPressed()
-                            this.isEnabled = true
+                var showPay by remember { mutableStateOf(true) }
+                if (showPay) {
+                    SozuPayScreen(
+                        onSend = { body, done -> chatViewModel.sendMessage(body, done) },
+                        onOpenChat = { showPay = false },
+                    )
+                } else {
+                    val backCallback = object : OnBackPressedCallback(true) {
+                        override fun handleOnBackPressed() {
+                            val handled = chatViewModel.handleBackPressed()
+                            if (!handled) {
+                                this.isEnabled = false
+                                onBackPressedDispatcher.onBackPressed()
+                                this.isEnabled = true
+                            }
+                        }
+                    }
+                    onBackPressedDispatcher.addCallback(this, backCallback)
+                    Column(Modifier.fillMaxSize()) {
+                        TextButton(
+                            onClick = { showPay = true },
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            Text("Pay")
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            ChatScreen(viewModel = chatViewModel)
                         }
                     }
                 }
-
-                // Add the callback - this will be automatically removed when the activity is destroyed
-                onBackPressedDispatcher.addCallback(this, backCallback)
-                ChatScreen(viewModel = chatViewModel)
             }
             
             OnboardingState.ERROR -> {
