@@ -3,10 +3,15 @@ package com.bitchat.android.ui.pay
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+
+data class SozuUpload(val frame: String, val hash: String?, val reason: String)
+
+data class FlushReport(val hash: String?, val uploads: List<SozuUpload>)
 
 /** Cheques signed offline. The first phone with a connection submits them. */
 object SozuPending {
@@ -34,20 +39,31 @@ object SozuPending {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    /** Returns the tx hash of the last cheque the vault accepted. */
-    fun flush(context: Context, settler: String): String? {
-        if (!online(context) || !isValidStellarAddress(settler)) return null
+    /**
+     * Pushes queued cheques once this phone has internet.
+     * A settled cheque and a note the vault already spent leave the queue.
+     * A transport failure stays queued for the next connection.
+     */
+    fun flush(context: Context, settler: String): FlushReport {
+        if (!online(context) || !isValidStellarAddress(settler)) return FlushReport(null, emptyList())
         val prefs = context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE)
         val current = pending(prefs)
         val left = JSONArray()
+        val uploads = ArrayList<SozuUpload>(current.length())
         var hash: String? = null
         for (i in 0 until current.length()) {
             val frame = current.optString(i)
-            val submitted = postFrame(frame, settler)
-            if (submitted != null) hash = submitted else left.put(frame)
+            val upload = postFrame(frame, settler)
+            uploads.add(upload)
+            if (upload.reason == "settled" && upload.hash != null) {
+                hash = upload.hash
+            } else if (upload.reason == "rejected") {
+                left.put(frame)
+            }
         }
         prefs.edit().putString("pending", left.toString()).apply()
-        return hash
+        Log.i("SozuPay", "flush uploads=${uploads.size} left=${left.length()} hash=${hash ?: "-"}")
+        return FlushReport(hash, uploads)
     }
 
     fun resolveTag(tag: String): String? {
@@ -73,7 +89,7 @@ object SozuPending {
         }
     }
 
-    private fun postFrame(frame: String, settler: String): String? {
+    private fun postFrame(frame: String, settler: String): SozuUpload {
         val connection = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 8000
@@ -85,11 +101,16 @@ object SozuPending {
         return try {
             val body = JSONObject().put("frame", frame).put("settler", settler).toString()
             connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            if (connection.responseCode !in 200..299) return null
-            val text = connection.inputStream.bufferedReader().readText()
-            JSONObject(text).optString("hash").takeIf { it.length >= 16 }
-        } catch (_: Exception) {
-            null
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.readText().orEmpty()
+            val hash = runCatching { JSONObject(text).optString("hash") }.getOrNull()?.takeIf { it.length >= 16 }
+            val reason = sozuUploadReason(text, code in 200..299, hash)
+            Log.i("SozuPay", "upload code=$code reason=$reason wallet=${settler.take(4)} body=${text.take(180)}")
+            SozuUpload(frame, hash, reason)
+        } catch (error: Exception) {
+            Log.w("SozuPay", "upload failed ${error.message}")
+            SozuUpload(frame, null, "rejected")
         } finally {
             connection.disconnect()
         }

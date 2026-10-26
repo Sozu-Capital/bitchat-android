@@ -102,9 +102,39 @@ object StellarStrKey {
         val decoded = decode(address.trim().uppercase()) ?: return null
         if (decoded.isEmpty()) return null
         val version = decoded[0].toInt() and 0xff
+        // decode() has already dropped the 2-byte checksum: version byte + 32-byte id.
         if (version != 48 && version != 16) return null
-        if (decoded.size != 35) return null
+        if (decoded.size != 33) return null
         return decoded.copyOfRange(1, 33)
+    }
+
+    /** Log line for a payment. `walletType` matches the directory: C is oz, G is legacy. */
+    fun diagnose(address: String): String {
+        val trimmed = address.trim().uppercase()
+        val walletType = when {
+            trimmed.startsWith("C") -> "oz"
+            trimmed.startsWith("G") -> "legacy"
+            trimmed.startsWith("M") -> "muxed"
+            else -> "unknown"
+        }
+        val prefix = trimmed.take(4)
+        if (trimmed.length != 56) {
+            return "walletType=$walletType prefix=$prefix len=${trimmed.length} reject=length"
+        }
+        val illegal = trimmed.firstOrNull { ALPHABET.indexOf(it) < 0 }
+        if (illegal != null) {
+            return "walletType=$walletType prefix=$prefix len=56 reject=alphabet"
+        }
+        val decoded = decode(trimmed)
+            ?: return "walletType=$walletType prefix=$prefix len=56 reject=checksum"
+        val version = decoded[0].toInt() and 0xff
+        if (version != 48 && version != 16) {
+            return "walletType=$walletType prefix=$prefix version=$version reject=version"
+        }
+        if (decoded.size != 33) {
+            return "walletType=$walletType prefix=$prefix bytes=${decoded.size} reject=size"
+        }
+        return "walletType=$walletType prefix=$prefix version=$version ok"
     }
 
     fun encodeAccount(publicKey: ByteArray): String = encode(48, publicKey)

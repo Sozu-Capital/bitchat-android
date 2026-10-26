@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -79,11 +80,34 @@ fun SozuPayScreen(
     var status by remember { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
+    val book = remember { SozuLedger.load(context) }
+    var left by remember { mutableStateOf(book.remaining()) }
 
     val cents = centsFromDigits(digits)
     val ownerOk = owner.takeIf(::isValidStellarAddress)
     val payeeOk = payee.takeIf(::isValidStellarAddress)
-    val canSend = selected != null && cents > 0 && ownerOk != null && payeeOk != null && !sending
+    val cost = SozuCheque.usdcMinor(cents) + SozuCheque.DEMO_FEE
+    val capped = book.collateral > 0L
+    val canSend = selected != null && cents > 0 && ownerOk != null && payeeOk != null && !sending && (!capped || cost <= left)
+
+    fun persistBook() {
+        left = book.remaining()
+        SozuLedger.save(context, book)
+    }
+
+    fun showFlush(report: FlushReport) {
+        for (upload in report.uploads) {
+            val id = book.holdId(upload.frame) ?: continue
+            if (upload.reason == "rejected") continue
+            book.apply(id, upload.reason)
+        }
+        persistBook()
+        when {
+            report.uploads.any { it.reason == "note-used" } -> error = "Note already used"
+            report.uploads.any { it.reason == "collateral" } -> error = "Over your offline limit"
+            report.hash != null -> status = "Submitted. app.sozu.capital/offline"
+        }
+    }
 
     fun rememberPayee(peerId: String, address: String) {
         payee = address
@@ -176,8 +200,8 @@ fun SozuPayScreen(
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 scope.launch {
-                    val hash = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
-                    if (hash != null) status = "Submitted. app.sozu.capital/offline"
+                    val report = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
+                    showFlush(report)
                 }
             }
         }
@@ -267,6 +291,13 @@ fun SozuPayScreen(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
+        Text(
+            text = if (capped) "${formatMinorUnits(left)} left" else "Offline limit not on this phone",
+            color = Color.White.copy(alpha = 0.45f),
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        )
         val note = error ?: status
         if (note != null) {
             Text(
@@ -313,25 +344,45 @@ fun SozuPayScreen(
                 status = "Confirm with passkey"
                 SozuSendHaptic.begin(context, scope)
                 scope.launch {
+                    var reserved: ByteArray? = null
                     try {
                         val signer = DeviceChequeSigner(activity)
                         val amount = SozuCheque.usdcMinor(cents)
+                        val fee = SozuCheque.DEMO_FEE
+                        Log.i(
+                            "SozuPay",
+                            "send owner=${StellarStrKey.diagnose(ownerOk)} payee=${StellarStrKey.diagnose(payeeOk)} amount=$amount fee=$fee left=${book.remaining()}",
+                        )
                         val payeeId = StellarStrKey.accountId(payeeOk)
-                            ?: throw IllegalArgumentException("That Stellar address is not valid")
+                            ?: throw IllegalArgumentException("Payee ${StellarStrKey.diagnose(payeeOk)}")
                         val ownerId = StellarStrKey.accountId(ownerOk)
-                            ?: throw IllegalArgumentException("Your Stellar address is not valid")
+                            ?: throw IllegalArgumentException("Owner ${StellarStrKey.diagnose(ownerOk)}")
+                        val noteId = SozuCheque.randomNoteId()
+                        if (book.collateral > 0L) {
+                            when (book.reserve(noteId, amount, fee)) {
+                                Reserve.Collateral -> throw IllegalArgumentException("Over your offline limit")
+                                Reserve.NoteUsed -> throw IllegalArgumentException("Note already used")
+                                Reserve.Amount -> throw IllegalArgumentException("Enter an amount")
+                                Reserve.Ok -> persistBook()
+                            }
+                            reserved = noteId
+                        } else {
+                            Log.i("SozuPay", "collateral unset, offline cap not applied")
+                        }
                         val body = SozuCheque.encodeBody(
                             vault = SozuCheque.vaultId(),
-                            noteId = SozuCheque.randomNoteId(),
+                            noteId = noteId,
                             amount = amount,
-                            fee = SozuCheque.DEMO_FEE,
-                            cap = amount + SozuCheque.DEMO_FEE,
+                            fee = fee,
+                            cap = amount + fee,
                             expirySeconds = System.currentTimeMillis() / 1000L + 7L * 24L * 3600L,
                             payee = payeeId,
                             owner = ownerId,
                             deviceKey = signer.compressedPublicKey(),
                         )
                         val frame = SozuCheque.frame(body + signer.sign(body))
+                        book.attach(noteId, frame)
+                        persistBook()
                         viewModel.sendToPeer(peerId, frame) { accepted ->
                             sending = false
                             if (accepted) {
@@ -340,19 +391,28 @@ fun SozuPayScreen(
                                 digits = ""
                                 status = "Cheque signed. It leaves when a phone is online."
                                 error = null
+                                Log.i("SozuPay", "mesh accepted note=${noteKey(noteId)} left=${book.remaining()}")
                                 scope.launch {
-                                    val hash = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
-                                    if (hash != null) status = "Submitted. app.sozu.capital/offline"
+                                    val report = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
+                                    showFlush(report)
                                 }
                             } else {
+                                book.release(noteId)
+                                persistBook()
                                 SozuSendHaptic.stop(context)
                                 error = "Not sent"
+                                Log.w("SozuPay", "mesh rejected note=${noteKey(noteId)}")
                             }
                         }
                     } catch (e: Exception) {
+                        reserved?.let {
+                            book.release(it)
+                            persistBook()
+                        }
                         SozuSendHaptic.stop(context)
                         sending = false
                         error = e.message ?: "Could not sign"
+                        Log.e("SozuPay", "pay failed ${e.message}")
                     }
                 }
             },

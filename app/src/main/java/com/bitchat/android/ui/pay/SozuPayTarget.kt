@@ -38,6 +38,13 @@ fun centsFromDigits(digits: String): Int {
     return clean.toIntOrNull() ?: 0
 }
 
+/** USDC minor units (7 decimals) shown as dollars.cents. 100_000 minor is one cent. */
+fun formatMinorUnits(minor: Long): String {
+    if (minor <= 0L) return "0.00"
+    val cents = (minor / 100_000L).coerceAtMost(Int.MAX_VALUE.toLong())
+    return formatCents(cents.toInt())
+}
+
 fun formatCents(cents: Int): String {
     val abs = kotlin.math.abs(cents)
     val whole = abs / 100

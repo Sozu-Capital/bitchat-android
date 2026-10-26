@@ -25,6 +25,16 @@ class SozuChequeTest {
     }
 
     @Test
+    fun diagnoseNamesWalletTypeAndABadChecksum() {
+        val classic = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+        assertTrue(StellarStrKey.diagnose(classic).contains("walletType=legacy"))
+        assertTrue(StellarStrKey.diagnose(classic).contains("ok"))
+        val contract = StellarStrKey.encodeContract(ByteArray(32) { (it + 3).toByte() })
+        assertTrue(StellarStrKey.diagnose(contract).contains("walletType=oz"))
+        assertTrue(StellarStrKey.diagnose("G" + "A".repeat(55)).contains("reject=checksum"))
+    }
+
+    @Test
     fun contractAddressRoundTrips() {
         val raw = ByteArray(32) { (it + 3).toByte() }
         val encoded = StellarStrKey.encodeContract(raw)
