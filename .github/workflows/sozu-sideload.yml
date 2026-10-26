@@ -48,6 +48,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="sozu-apk-0.1.1"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "${{ github.sha }}" --title "Sozu offline pay 0.1.1" --notes "Sozu-branded mesh pay. Signed with the Sozu key. Tap a person, enter an amount, confirm with your passkey. The phone signs a Stellar cheque and sends it on the mesh."
+          tag="sozu-apk-0.1.2"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "${{ github.sha }}" --title "Sozu offline pay 0.1.2" --notes "Cheques name the testnet vault CDSCQSVWKTYR7EUJK5EQXIFI4L2C4LCPQOIUYP6PMG6KW4O2BZGCRLLV. Tap a person, enter an amount, confirm with your passkey."
           gh release upload "$tag" sozu-offline-pay.apk --clobber

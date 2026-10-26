@@ -290,7 +290,7 @@ fun SozuPayScreen(
                         val ownerId = StellarStrKey.accountId(ownerOk)
                             ?: throw IllegalArgumentException("Your Stellar address is not valid")
                         val body = SozuCheque.encodeBody(
-                            vault = ByteArray(32),
+                            vault = SozuCheque.vaultId(),
                             noteId = SozuCheque.randomNoteId(),
                             amount = amount,
                             fee = SozuCheque.DEMO_FEE,

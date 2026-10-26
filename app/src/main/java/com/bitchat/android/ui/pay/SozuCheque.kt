@@ -7,7 +7,13 @@ import java.security.SecureRandom
 object SozuCheque {
     const val BODY_BYTES = 179
     const val NETWORK_TESTNET = 1
+    const val VAULT_CONTRACT = "CDSCQSVWKTYR7EUJK5EQXIFI4L2C4LCPQOIUYP6PMG6KW4O2BZGCRLLV"
     val DEMO_FEE = 100_000L
+
+    fun vaultId(): ByteArray {
+        return StellarStrKey.accountId(VAULT_CONTRACT)
+            ?: error("Vault contract is not a Stellar contract id")
+    }
     private val USDC = 10_000_000L
     private val ORDER = BigInteger("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 16)
 
