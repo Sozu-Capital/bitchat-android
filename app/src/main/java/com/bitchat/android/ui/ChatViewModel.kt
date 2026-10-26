@@ -1072,36 +1072,6 @@ class ChatViewModel(
         }
     }
 
-    /** Private mesh text to one nearby peer. Does not open a chat. */
-    fun sendToPeer(peerId: String, content: String, onAccepted: (Boolean) -> Unit = {}) {
-        if (content.isEmpty()) {
-            onAccepted(false)
-            return
-        }
-        val recipientNickname = nicknameForPeer(peerId)
-        viewModelScope.launch {
-            val accepted = privateChatManager.sendPrivateMessageDurably(
-                content,
-                peerId,
-                recipientNickname,
-                state.getNicknameValue(),
-                mesh.myPeerID
-            ) { messageContent, destination, recipientNicknameParam, messageId ->
-                val router = com.bitchat.android.services.MessageRouter.getInstance(
-                    getApplication(),
-                    mesh
-                )
-                router.sendPrivate(
-                    messageContent,
-                    destination,
-                    recipientNicknameParam,
-                    messageId
-                )
-            }
-            onAccepted(accepted)
-        }
-    }
-
     // MARK: - Utility Functions
     
     fun getPeerIDForNickname(nickname: String): String? {
@@ -1361,13 +1331,6 @@ class ChatViewModel(
 
     fun hideMeshPeerList() {
         state.setShowMeshPeerList(false)
-    }
-
-    var onMeshPay: ((String) -> Unit)? = null
-
-    fun payMeshPeer(peerID: String) {
-        val pay = onMeshPay
-        if (pay != null) pay(peerID) else showPrivateChatSheet(peerID)
     }
 
     fun showPrivateChatSheet(peerID: String) {

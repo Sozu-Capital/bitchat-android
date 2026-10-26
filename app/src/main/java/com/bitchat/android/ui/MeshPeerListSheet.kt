@@ -440,7 +440,7 @@ fun MeshPeerListSheet(
                                     excludedIdentityAliases = conversationIdentityAliases,
                                     viewModel = viewModel,
                                     onPrivateChatStart = { peerID ->
-                                        viewModel.payMeshPeer(peerID)
+                                        viewModel.showPrivateChatSheet(peerID)
                                         onDismiss()
                                     }
                                 )

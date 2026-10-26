@@ -27,11 +27,11 @@ android {
     buildToolsVersion = libs.versions.buildTools.get()
 
     defaultConfig {
-        applicationId = "capital.sozu.mesh"
+        applicationId = "com.bitchat.droid"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 44
-        versionName = "2.0.7-sozu"
+        versionCode = 40
+        versionName = "2.0.3"
         buildConfigField(
             "String",
             "GITHUB_RELEASE_CERT_SHA256",
