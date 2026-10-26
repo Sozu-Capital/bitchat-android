@@ -84,6 +84,44 @@ fun meshPayText(target: SozuPayTarget, cents: Int): String {
     return lines.joinToString("\n")
 }
 
+data class SozuWalletLink(
+    val address: String,
+    val tag: String?,
+    val minor: Long,
+)
+
+/**
+ * `sozu://link?addr=C...&usdc=10` is the web passkey wallet.
+ * `usdc` is the faucet balance already on that account, in whole USDC.
+ */
+fun parseSozuLink(raw: String): SozuWalletLink? {
+    val trimmed = raw.trim()
+    val query = when {
+        trimmed.startsWith("sozu://link?") -> trimmed.removePrefix("sozu://link?")
+        trimmed.startsWith("sozu:link?") -> trimmed.removePrefix("sozu:link?")
+        else -> return null
+    }
+    val params = queryParams(query.substringBefore('#'))
+    val address = params["addr"]?.trim()?.uppercase()?.takeIf(::isValidStellarAddress) ?: return null
+    val tag = params["tag"]?.let(::normalizeSozuTag)?.takeIf(::isValidSozuTag)
+    val minor = params["usdc"]?.let(::parseUsdcMinor) ?: 0L
+    return SozuWalletLink(address, tag, minor)
+}
+
+/** Whole USDC with up to 7 decimal places, as minor units. */
+fun parseUsdcMinor(raw: String): Long? {
+    val text = raw.trim()
+    if (text.isEmpty() || text.count { it == '.' } > 1) return null
+    val parts = text.split('.')
+    if (parts[0].isEmpty() || parts[0].any { !it.isDigit() }) return null
+    val whole = parts[0].toLongOrNull() ?: return null
+    if (whole > Long.MAX_VALUE / 10_000_000L) return null
+    val fracText = if (parts.size == 2) parts[1] else ""
+    if (fracText.any { !it.isDigit() }) return null
+    val frac = fracText.padEnd(7, '0').take(7).toLongOrNull() ?: return null
+    return whole * 10_000_000L + frac
+}
+
 fun shortAddress(address: String): String {
     if (address.length <= 12) return address
     return address.take(4) + "…" + address.takeLast(4)

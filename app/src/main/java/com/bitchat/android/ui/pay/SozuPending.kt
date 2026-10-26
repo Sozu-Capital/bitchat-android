@@ -15,8 +15,8 @@ data class FlushReport(val hash: String?, val uploads: List<SozuUpload>)
 
 /** Cheques signed offline. The first phone with a connection submits them. */
 object SozuPending {
-    private const val ENDPOINT = "https://app.sozu.capital/api/offline/submit"
-    private const val RESOLVE = "https://app.sozu.capital/api/wallet/resolve-recipient"
+    private const val ENDPOINT = "https://dev.sozu.capital/api/offline/submit"
+    private const val RESOLVE = "https://dev.sozu.capital/api/wallet/resolve-recipient"
 
     fun remember(context: Context, frame: String) {
         val text = frame.trim()

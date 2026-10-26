@@ -52,6 +52,7 @@ import com.bitchat.android.ui.pay.SozuDeviceKey
 import com.bitchat.android.ui.pay.SozuNode
 import com.bitchat.android.ui.pay.SozuNodeScreen
 import com.bitchat.android.ui.pay.SozuPayScreen
+import com.bitchat.android.ui.pay.SozuWallet
 import com.bitchat.android.ui.pay.SozuTag
 import com.bitchat.android.ui.pay.SozuTagScreen
 import com.bitchat.android.ui.OrientationAwareActivity
@@ -75,6 +76,7 @@ class MainActivity : OrientationAwareActivity() {
     private lateinit var unifiedMeshService: MeshService
     private val mainViewModel: MainViewModel by viewModels()
     private var pendingMeshForegroundServiceStart = false
+    private val walletLinkEpoch = mutableIntStateOf(0)
     private val chatViewModel: ChatViewModel by viewModels { 
         object : ViewModelProvider.Factory {
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
@@ -95,6 +97,7 @@ class MainActivity : OrientationAwareActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        noteWalletLink(intent)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             this.setRecentsScreenshotEnabled(false)
         }
@@ -327,6 +330,7 @@ class MainActivity : OrientationAwareActivity() {
                         initialPeer = payPeer,
                         onPayPeerOpened = { payPeer = null },
                         onOpenChat = { showPay = false },
+                        linkEpoch = walletLinkEpoch.intValue,
                     )
                 } else {
                     val backCallback = object : OnBackPressedCallback(true) {
@@ -728,6 +732,7 @@ class MainActivity : OrientationAwareActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        noteWalletLink(intent)
         
         // Check if this is a quit request from the notification
         if (intent.getBooleanExtra("ACTION_QUIT_APP", false)) {
@@ -743,6 +748,13 @@ class MainActivity : OrientationAwareActivity() {
             handleNotificationIntent(intent)
             handleVerificationIntent(intent)
         }
+    }
+
+    private fun noteWalletLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "sozu" || data.host != "link") return
+        SozuWallet.pendingLink = data.toString()
+        walletLinkEpoch.intValue++
     }
 
     override fun onStart() {

@@ -71,6 +71,16 @@ class SozuChequeTest {
         assertEquals(50_000_000L, readU64(body, 50))
     }
 
+    @Test
+    fun aWebWalletLinkCarriesTheFaucetBalance() {
+        val raw = "sozu://link?addr=CAMVPBC6XL42KGHQPOLBBZ5EKIHER3DCNY2FRZH677JS2KWH4RNILEJH&tag=daniloco&usdc=10"
+        val link = parseSozuLink(raw)
+        assertEquals("CAMVPBC6XL42KGHQPOLBBZ5EKIHER3DCNY2FRZH677JS2KWH4RNILEJH", link?.address)
+        assertEquals("daniloco", link?.tag)
+        assertEquals(100_000_000L, link?.minor)
+        assertEquals(null, parseSozuLink("sozu://link?addr=not-a-wallet&usdc=10"))
+    }
+
     private fun readU64(body: ByteArray, offset: Int): Long {
         var v = 0L
         for (i in 7 downTo 0) v = (v shl 8) or (body[offset + i].toLong() and 0xff)

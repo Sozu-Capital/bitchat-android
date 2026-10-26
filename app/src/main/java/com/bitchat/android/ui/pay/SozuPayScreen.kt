@@ -1,6 +1,7 @@
 package com.bitchat.android.ui.pay
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.ConnectivityManager
@@ -60,6 +61,7 @@ fun SozuPayScreen(
     initialPeer: String? = null,
     onPayPeerOpened: () -> Unit = {},
     onOpenChat: () -> Unit,
+    linkEpoch: Int = 0,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -105,7 +107,7 @@ fun SozuPayScreen(
         when {
             report.uploads.any { it.reason == "note-used" } -> error = "Note already used"
             report.uploads.any { it.reason == "collateral" } -> error = "Over your offline limit"
-            report.hash != null -> status = "Submitted. app.sozu.capital/offline"
+            report.hash != null -> status = "Submitted. dev.sozu.capital/offline"
         }
     }
 
@@ -141,6 +143,24 @@ fun SozuPayScreen(
         if (!isValidStellarAddress(owner) || SozuTag.synced(context) == tag) return@LaunchedEffect
         val saved = withContext(Dispatchers.IO) { SozuDirectory.publish(tag, owner) }
         if (saved) SozuTag.markSynced(context, tag)
+    }
+
+    LaunchedEffect(linkEpoch) {
+        val raw = SozuWallet.pendingLink ?: return@LaunchedEffect
+        SozuWallet.pendingLink = null
+        val link = parseSozuLink(raw) ?: return@LaunchedEffect
+        SozuWallet.useWebWallet(context, link.address)
+        owner = link.address
+        val linkedTag = link.tag
+        if (linkedTag != null) {
+            SozuTag.choose(context, linkedTag)
+            myTag = linkedTag
+            viewModel.setNickname(linkedTag)
+        }
+        if (link.minor > 0L) book.adopt(link.minor)
+        persistBook()
+        status = "Linked ${shortAddress(link.address)}. Offline limit ${formatMinorUnits(link.minor)}. Your passkey on dev.sozu.capital still signs the vault deposit."
+        error = null
     }
 
     LaunchedEffect(peers, owner, myTag) {
@@ -285,14 +305,28 @@ fun SozuPayScreen(
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
         Text(
-            text = if (payeeOk != null) shortAddress(payeeOk) else "Waiting for their wallet",
+            text = if (payeeOk != null) "To ${shortAddress(payeeOk)}" else "Waiting for their wallet",
             color = Color.White.copy(alpha = 0.45f),
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            text = if (capped) "${formatMinorUnits(left)} left" else "Offline limit not on this phone",
+            text = if (ownerOk != null) "You ${shortAddress(ownerOk)}" else "Your wallet is not ready",
+            color = Color.White.copy(alpha = 0.45f),
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp)
+                .clickable {
+                    if (ownerOk != null) copyWallet(context, ownerOk)
+                    status = "Your wallet copied"
+                    error = null
+                },
+        )
+        Text(
+            text = if (capped) "${formatMinorUnits(left)} left offline" else "No offline balance yet",
             color = Color.White.copy(alpha = 0.45f),
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
@@ -330,6 +364,29 @@ fun SozuPayScreen(
                         }
                     }
                 }
+            }
+        }
+        if (!capped || cents > 0) {
+            TextButton(
+                onClick = {
+                    val minor = SozuCheque.usdcMinor(cents)
+                    if (minor <= 0L) {
+                        error = "Enter an amount to lock"
+                        return@TextButton
+                    }
+                    book.lock(minor)
+                    persistBook()
+                    digits = ""
+                    error = null
+                    status = "${formatMinorUnits(minor)} locked on this phone"
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                Text(
+                    text = if (cents > 0) "Lock ${formatCents(cents)} offline" else "Lock offline balance",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 14.sp,
+                )
             }
         }
         TextButton(
@@ -445,6 +502,7 @@ private fun PeopleHome(
     onOpenChat: () -> Unit,
     onPick: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     Column(modifier = Modifier.sozuFrame()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -465,11 +523,19 @@ private fun PeopleHome(
             TextButton(onClick = onOpenChat) { Text("Chat", color = Color.White.copy(alpha = 0.4f)) }
         }
         Text(
+            text = if (owner.isBlank()) "Wallet not ready" else "Your wallet ${shortAddress(owner)}",
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 18.dp).clickable {
+                if (owner.isNotBlank()) copyWallet(context, owner)
+            },
+        )
+        Text(
             text = if (peers.isEmpty()) "Looking for people nearby" else "Tap someone to pay",
             color = Color.White,
             fontSize = 22.sp,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 28.dp, bottom = 20.dp),
+            modifier = Modifier.padding(top = 12.dp, bottom = 20.dp),
         )
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -492,6 +558,11 @@ private fun PeopleHome(
             }
         }
     }
+}
+
+private fun copyWallet(context: Context, address: String) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("Sozu wallet", address))
 }
 
 @Composable

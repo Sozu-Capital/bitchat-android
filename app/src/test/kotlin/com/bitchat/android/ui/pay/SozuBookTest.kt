@@ -68,6 +68,27 @@ class SozuBookTest {
     }
 
     @Test
+    fun lockingRaisesTheOfflineLimit() {
+        val book = SozuBook.open(0L)
+        book.lock(5L * usdc)
+        assertEquals(5L * usdc, book.remaining())
+        assertEquals(Reserve.Ok, book.reserve(ByteArray(16) { 1 }, usdc, fee))
+        val restored = SozuBook.import(book.export())
+        assertEquals(book.remaining(), restored.remaining())
+    }
+
+    @Test
+    fun adoptingTheSameFaucetBalanceDoesNotStack() {
+        val book = SozuBook.open(0L)
+        book.adopt(10L * usdc)
+        book.adopt(10L * usdc)
+        book.adopt(4L * usdc)
+        assertEquals(10L * usdc, book.remaining())
+        assertEquals(Reserve.Ok, book.reserve(ByteArray(16) { 4 }, 9L * usdc, fee))
+        assertEquals(Reserve.Collateral, book.reserve(ByteArray(16) { 5 }, usdc, fee))
+    }
+
+    @Test
     fun theBookRoundTrips() {
         val book = SozuBook.open(5L * usdc)
         val note = ByteArray(16) { 8 }

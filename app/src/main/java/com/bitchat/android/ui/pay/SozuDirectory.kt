@@ -6,7 +6,7 @@ import java.net.URL
 
 /** Writes this phone's tag and smart-account address into the Sozu directory. */
 object SozuDirectory {
-    private const val ENDPOINT = "https://app.sozu.capital/api/wallet/sozu-tag"
+    private const val ENDPOINT = "https://dev.sozu.capital/api/wallet/sozu-tag"
 
     fun publish(tag: String, stellarAddress: String): Boolean {
         if (!isValidSozuTag(tag) || !isValidStellarAddress(stellarAddress)) return false

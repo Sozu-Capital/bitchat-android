@@ -10,10 +10,25 @@ import android.content.Context
  * Any other rejection gives the collateral back.
  */
 class SozuBook(
-    val collateral: Long,
+    var collateral: Long,
     private val holds: MutableList<Hold> = mutableListOf(),
 ) {
     fun remaining(): Long = (collateral - holds.sumOf { it.amount + it.fee }).coerceAtLeast(0L)
+
+    /** Adds to the offline limit stored on this phone. This does not move USDC on chain. */
+    fun lock(amount: Long) {
+        if (amount <= 0L) return
+        collateral += amount
+    }
+
+    /**
+     * Raises the offline limit to a faucet balance already on the linked wallet.
+     * Opening the same link again does not add the amount a second time.
+     * This does not move USDC on chain.
+     */
+    fun adopt(amount: Long) {
+        if (amount > collateral) collateral = amount
+    }
 
     fun reserve(noteId: ByteArray, amount: Long, fee: Long): Reserve {
         val id = noteKey(noteId) ?: return Reserve.Amount
