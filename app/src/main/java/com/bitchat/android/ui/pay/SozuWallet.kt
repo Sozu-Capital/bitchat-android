@@ -1,34 +1,41 @@
 package com.bitchat.android.ui.pay
 
+import android.app.Activity
 import android.content.Context
-import java.security.SecureRandom
-import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
-import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import java.security.MessageDigest
 
-/** Stellar account created the first time Sozu opens. The seed stays on this phone. */
+/**
+ * USDC on Sozu is held by a smart account. The phone announces a C address
+ * derived from its passkey. A classic G account is still accepted from a peer
+ * so an older phone can be paid. The cheque keeps the same 32-byte id.
+ */
 object SozuWallet {
-    fun loadOrCreate(context: Context): String {
-        val prefs = context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE)
-        val existing = prefs.getString("account", null)
-        if (existing != null && isValidStellarAddress(existing)) return existing
-
-        val generator = Ed25519KeyPairGenerator()
-        generator.init(Ed25519KeyGenerationParameters(SecureRandom()))
-        val pair = generator.generateKeyPair()
-        val seed = (pair.private as Ed25519PrivateKeyParameters).encoded
-        val account = StellarStrKey.encodeAccount((pair.public as Ed25519PublicKeyParameters).encoded)
-        prefs.edit()
-            .putString("seed", seed.joinToString("") { "%02x".format(it) })
+    fun ensure(context: Context, activity: Activity): String {
+        val signer = DeviceChequeSigner(activity)
+        signer.prepare()
+        val contractId = MessageDigest.getInstance("SHA-256").digest(signer.compressedPublicKey())
+        val account = StellarStrKey.encodeContract(contractId)
+        context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE)
+            .edit()
             .putString("account", account)
             .putString("owner", account)
             .apply()
         return account
     }
 
+    fun loadOrCreate(context: Context): String {
+        val existing = context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE)
+            .getString("account", null)
+        return existing?.takeIf(::isValidStellarAddress).orEmpty()
+    }
+
     fun addressFromMeshText(content: String): String? {
         val line = content.lineSequence().firstOrNull { it.startsWith("sozu-wallet:") } ?: return null
         return line.removePrefix("sozu-wallet:").trim().uppercase().takeIf(::isValidStellarAddress)
+    }
+
+    fun tagFromMeshText(content: String): String? {
+        val line = content.lineSequence().firstOrNull { it.startsWith("sozu-tag:") } ?: return null
+        return normalizeSozuTag(line.removePrefix("sozu-tag:")).takeIf(::isValidSozuTag)
     }
 }

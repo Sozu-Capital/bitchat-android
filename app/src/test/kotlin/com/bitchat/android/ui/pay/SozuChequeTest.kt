@@ -1,7 +1,9 @@
 package com.bitchat.android.ui.pay
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SozuChequeTest {
@@ -20,6 +22,15 @@ class SozuChequeTest {
             .map { it.toInt(16).toByte() }
             .toByteArray()
         assertEquals("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", StellarStrKey.encodeAccount(raw))
+    }
+
+    @Test
+    fun contractAddressRoundTrips() {
+        val raw = ByteArray(32) { (it + 3).toByte() }
+        val encoded = StellarStrKey.encodeContract(raw)
+        assertTrue(encoded.startsWith("C"))
+        assertEquals(56, encoded.length)
+        assertArrayEquals(raw, StellarStrKey.accountId(encoded))
     }
 
     @Test

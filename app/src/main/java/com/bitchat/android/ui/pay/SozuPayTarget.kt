@@ -21,6 +21,13 @@ fun normalizeSozuTag(raw: String): String {
 
 fun isValidSozuTag(tag: String): Boolean = TAG.matches(tag)
 
+/** Bitchat's default name (`anon1234`) is already a valid tag. Anything else is cleaned. */
+fun sozuTagFromNickname(raw: String): String {
+    val clean = normalizeSozuTag(raw)
+    if (isValidSozuTag(clean)) return clean
+    return "anon${(1000..9999).random()}"
+}
+
 fun isValidStellarAddress(value: String): Boolean {
     val trimmed = value.trim().uppercase()
     return CLASSIC_G.matches(trimmed) || CONTRACT_C.matches(trimmed)

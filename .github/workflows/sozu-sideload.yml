@@ -48,6 +48,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="sozu-apk-0.1.4"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "${{ github.sha }}" --title "Sozu offline pay 0.1.4" --notes "Tap a nearby person to open the keypad. One permission screen, then a choice to upload cheques and earn respect. The passkey is created on first open."
+          tag="sozu-apk-0.1.5"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "${{ github.sha }}" --title "Sozu offline pay 0.1.5" --notes "The Sozu tag is the name on the mesh. A cheque leaves with no internet. The first phone back online submits it to the vault. Audit those payments at https://app.sozu.capital/offline"
           gh release upload "$tag" sozu-offline-pay.apk --clobber

@@ -3,6 +3,8 @@ package com.bitchat.android.ui.pay
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -23,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +46,9 @@ import com.bitchat.android.ui.ChatViewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del")
 
@@ -63,7 +68,8 @@ fun SozuPayScreen(
     val names by viewModel.peerNicknames.collectAsStateWithLifecycle()
     val meshMessages by viewModel.messages.collectAsStateWithLifecycle()
     val privateChats by viewModel.privateChats.collectAsStateWithLifecycle()
-    val owner = remember { SozuWallet.loadOrCreate(context) }
+    var owner by remember { mutableStateOf(SozuWallet.loadOrCreate(context)) }
+    var myTag by remember { mutableStateOf(SozuTag.current(context).orEmpty()) }
     val announced = remember { mutableSetOf<String>() }
 
     var digits by remember { mutableStateOf("") }
@@ -100,11 +106,26 @@ fun SozuPayScreen(
         error = null
     }
 
-    LaunchedEffect(peers, owner) {
+    LaunchedEffect(Unit) {
+        val activity = context as? Activity
+        if (activity != null) {
+            runCatching { owner = SozuWallet.ensure(context, activity) }
+        }
+        val tag = SozuTag.current(context) ?: return@LaunchedEffect
+        myTag = tag
+        if (tag.isNotBlank()) viewModel.setNickname(tag)
+        if (!isValidStellarAddress(owner) || SozuTag.synced(context) == tag) return@LaunchedEffect
+        val saved = withContext(Dispatchers.IO) { SozuDirectory.publish(tag, owner) }
+        if (saved) SozuTag.markSynced(context, tag)
+    }
+
+    LaunchedEffect(peers, owner, myTag) {
+        if (!isValidStellarAddress(owner)) return@LaunchedEffect
+        val line = if (myTag.isNotBlank()) "sozu-wallet:$owner\nsozu-tag:$myTag" else "sozu-wallet:$owner"
         peers.forEach { peer ->
-            if (!announced.add(peer)) return@forEach
-            viewModel.sendToPeer(peer, "sozu-wallet:$owner") { accepted ->
-                if (!accepted) announced.remove(peer)
+            if (!announced.add("$peer:$owner")) return@forEach
+            viewModel.sendToPeer(peer, line) { accepted ->
+                if (!accepted) announced.remove("$peer:$owner")
             }
         }
     }
@@ -112,10 +133,17 @@ fun SozuPayScreen(
     LaunchedEffect(meshMessages, privateChats, selected) {
         val mine = viewModel.myPeerID
         fun learn(peerId: String?, content: String) {
+            content.lineSequence().firstOrNull { it.startsWith("SOZU1:") }?.let { frame ->
+                SozuPending.remember(context, frame)
+            }
             if (peerId.isNullOrBlank() || peerId == mine) return
-            val address = SozuWallet.addressFromMeshText(content) ?: return
-            prefs.edit().putString("payee:$peerId", address).apply()
-            if (selected == peerId) payee = address
+            val address = SozuWallet.addressFromMeshText(content)
+            val tag = SozuWallet.tagFromMeshText(content)
+            if (tag != null) prefs.edit().putString("peerTag:$peerId", tag).apply()
+            if (address != null) {
+                prefs.edit().putString("payee:$peerId", address).apply()
+                if (selected == peerId) payee = address
+            }
         }
         meshMessages.forEach { learn(it.senderPeerID, it.content) }
         privateChats.forEach { (_, items) ->
@@ -131,6 +159,38 @@ fun SozuPayScreen(
         error = null
         status = null
         onPayPeerOpened()
+    }
+
+    LaunchedEffect(selected, payee, owner) {
+        val peer = selected ?: return@LaunchedEffect
+        if (payee.isNotBlank() || !isValidStellarAddress(owner)) return@LaunchedEffect
+        val tag = prefs.getString("peerTag:$peer", null) ?: return@LaunchedEffect
+        if (!SozuPending.online(context)) return@LaunchedEffect
+        val address = withContext(Dispatchers.IO) { SozuPending.resolveTag(tag) } ?: return@LaunchedEffect
+        prefs.edit().putString("payee:$peer", address).apply()
+        if (selected == peer) payee = address
+    }
+
+    DisposableEffect(context, owner) {
+        val manager = context.getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                scope.launch {
+                    val hash = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
+                    if (hash != null) status = "Submitted. app.sozu.capital/offline"
+                }
+            }
+        }
+        var registered = false
+        if (manager != null) {
+            runCatching {
+                manager.registerDefaultNetworkCallback(callback)
+                registered = true
+            }
+        }
+        onDispose {
+            if (registered) runCatching { manager?.unregisterNetworkCallback(callback) }
+        }
     }
 
     if (scanning) {
@@ -149,6 +209,7 @@ fun SozuPayScreen(
     if (selected == null) {
         PeopleHome(
             owner = owner,
+            tag = myTag,
             peers = peers,
             names = names,
             onOpenChat = onOpenChat,
@@ -164,13 +225,10 @@ fun SozuPayScreen(
     }
 
     val peerId = selected ?: return
-    val label = names[peerId]?.takeIf { it.isNotBlank() } ?: "Nearby"
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .padding(horizontal = 20.dp),
-    ) {
+    val label = names[peerId]?.takeIf { it.isNotBlank() }
+        ?: prefs.getString("peerTag:$peerId", null)
+        ?: "Nearby"
+    Column(modifier = Modifier.sozuFrame()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 4.dp),
@@ -189,7 +247,7 @@ fun SozuPayScreen(
                 textAlign = TextAlign.Center,
             )
             Text(
-                text = shortAddress(owner),
+                text = if (myTag.isNotBlank()) "$$myTag" else shortAddress(owner),
                 color = Color.White.copy(alpha = 0.4f),
                 fontSize = 12.sp,
             )
@@ -253,6 +311,7 @@ fun SozuPayScreen(
                 sending = true
                 error = null
                 status = "Confirm with passkey"
+                SozuSendHaptic.begin(context, scope)
                 scope.launch {
                     try {
                         val signer = DeviceChequeSigner(activity)
@@ -276,14 +335,22 @@ fun SozuPayScreen(
                         viewModel.sendToPeer(peerId, frame) { accepted ->
                             sending = false
                             if (accepted) {
+                                SozuSendHaptic.finish(context)
+                                SozuPending.remember(context, frame)
                                 digits = ""
-                                status = "Cheque signed. Waiting for a node."
+                                status = "Cheque signed. It leaves when a phone is online."
                                 error = null
+                                scope.launch {
+                                    val hash = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
+                                    if (hash != null) status = "Submitted. app.sozu.capital/offline"
+                                }
                             } else {
+                                SozuSendHaptic.stop(context)
                                 error = "Not sent"
                             }
                         }
                     } catch (e: Exception) {
+                        SozuSendHaptic.stop(context)
                         sending = false
                         error = e.message ?: "Could not sign"
                     }
@@ -292,7 +359,7 @@ fun SozuPayScreen(
             enabled = canSend,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 4.dp, bottom = 12.dp)
+                .padding(top = 8.dp, bottom = 8.dp)
                 .background(
                     if (canSend) Color.White else Color.White.copy(alpha = 0.2f),
                     RoundedCornerShape(28.dp),
@@ -312,17 +379,13 @@ fun SozuPayScreen(
 @Composable
 private fun PeopleHome(
     owner: String,
+    tag: String,
     peers: List<String>,
     names: Map<String, String>,
     onOpenChat: () -> Unit,
     onPick: (String) -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .padding(horizontal = 20.dp),
-    ) {
+    Column(modifier = Modifier.sozuFrame()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 8.dp),
@@ -334,7 +397,11 @@ private fun PeopleHome(
                 letterSpacing = 2.sp,
                 modifier = Modifier.weight(1f),
             )
-            Text(text = shortAddress(owner), color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp)
+            Text(
+                text = if (tag.isNotBlank()) "$$tag" else shortAddress(owner),
+                color = Color.White.copy(alpha = 0.45f),
+                fontSize = 12.sp,
+            )
             TextButton(onClick = onOpenChat) { Text("Chat", color = Color.White.copy(alpha = 0.4f)) }
         }
         Text(

@@ -52,6 +52,8 @@ import com.bitchat.android.ui.pay.SozuDeviceKey
 import com.bitchat.android.ui.pay.SozuNode
 import com.bitchat.android.ui.pay.SozuNodeScreen
 import com.bitchat.android.ui.pay.SozuPayScreen
+import com.bitchat.android.ui.pay.SozuTag
+import com.bitchat.android.ui.pay.SozuTagScreen
 import com.bitchat.android.ui.OrientationAwareActivity
 import com.bitchat.android.ui.theme.BitchatTheme
 import com.bitchat.android.wifiaware.WifiAwareController
@@ -282,6 +284,7 @@ class MainActivity : OrientationAwareActivity() {
             OnboardingState.COMPLETE -> {
                 val context = LocalContext.current
                 var nodeDecided by remember { mutableStateOf(SozuNode.decided(context)) }
+                var tagDecided by remember { mutableStateOf(SozuTag.decided(context)) }
                 if (!nodeDecided) {
                     SozuNodeScreen(
                         onJoin = {
@@ -292,6 +295,21 @@ class MainActivity : OrientationAwareActivity() {
                             SozuNode.choose(context, false)
                             nodeDecided = true
                         },
+                    )
+                } else if (!tagDecided) {
+                    val suggested = remember { SozuTag.suggested(context) }
+                    SozuTagScreen(
+                        suggested = suggested,
+                            onSave = { tag ->
+                                SozuTag.choose(context, tag)
+                                chatViewModel.setNickname(tag)
+                                tagDecided = true
+                            },
+                            onSkip = {
+                                SozuTag.choose(context, suggested)
+                                chatViewModel.setNickname(suggested)
+                                tagDecided = true
+                            },
                     )
                 } else {
                 var showPay by remember { mutableStateOf(true) }

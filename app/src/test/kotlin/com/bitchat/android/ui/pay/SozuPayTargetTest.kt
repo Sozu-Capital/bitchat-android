@@ -2,10 +2,18 @@ package com.bitchat.android.ui.pay
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SozuPayTargetTest {
     private val account = "G" + "A".repeat(55)
+
+    @Test
+    fun nicknameBecomesTheTagWhenSkipped() {
+        assertEquals("anon4821", sozuTagFromNickname("anon4821"))
+        assertEquals("JoaquinNam", sozuTagFromNickname("Joaquin Nam"))
+        assertTrue(sozuTagFromNickname("!!").startsWith("anon"))
+    }
 
     @Test
     fun tagOnly() {

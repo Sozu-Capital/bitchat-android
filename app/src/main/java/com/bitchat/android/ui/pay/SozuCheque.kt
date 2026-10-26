@@ -107,11 +107,15 @@ object StellarStrKey {
         return decoded.copyOfRange(1, 33)
     }
 
-    fun encodeAccount(publicKey: ByteArray): String {
-        require(publicKey.size == 32)
+    fun encodeAccount(publicKey: ByteArray): String = encode(48, publicKey)
+
+    fun encodeContract(contractId: ByteArray): String = encode(16, contractId)
+
+    private fun encode(version: Int, payload32: ByteArray): String {
+        require(payload32.size == 32)
         val payload = ByteArray(33)
-        payload[0] = 48
-        publicKey.copyInto(payload, 1)
+        payload[0] = version.toByte()
+        payload32.copyInto(payload, 1)
         val crc = crc16(payload)
         val withCrc = payload + byteArrayOf((crc and 0xff).toByte(), ((crc shr 8) and 0xff).toByte())
         return base32(withCrc)
