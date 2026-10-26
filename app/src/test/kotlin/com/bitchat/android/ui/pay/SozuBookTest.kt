@@ -58,6 +58,19 @@ class SozuBookTest {
     }
 
     @Test
+    fun waitingForThePasskeyKeepsTheOfflineHold() {
+        val book = SozuBook.open(5L * usdc)
+        val note = ByteArray(16) { 6 }
+        book.reserve(note, usdc, fee)
+        book.attach(note, "SOZU1:wire")
+        book.apply(book.holdId("SOZU1:wire")!!, "passkey")
+        assertEquals(listOf("SOZU1:wire"), book.pendingFrames())
+        assertEquals(5L * usdc - usdc - fee, book.remaining())
+        val restored = SozuBook.import(book.export())
+        assertEquals(book.remaining(), restored.remaining())
+    }
+
+    @Test
     fun aCollateralRejectionGivesTheLimitBack() {
         val book = SozuBook.open(usdc)
         val note = ByteArray(16) { 3 }

@@ -117,14 +117,17 @@ fun SozuPayScreen(
             report.hash != null -> status = "Submitted."
             report.uploads.any { it.reason == "passkey" } -> {
                 val frame = report.uploads.first { it.reason == "passkey" }.frame
-                status = "Confirm with your passkey."
-                runCatching {
-                    context.startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("https://dev.sozu.capital/offline?frame=${Uri.encode(frame)}"),
-                        ),
-                    )
+                status = "Confirm with your passkey. This amount stays reserved."
+                if (prefs.getString("handed-frame", null) != frame) {
+                    prefs.edit().putString("handed-frame", frame).apply()
+                    runCatching {
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://dev.sozu.capital/offline?frame=${Uri.encode(frame)}"),
+                            ),
+                        )
+                    }
                 }
             }
             report.uploads.any { it.reason == "rejected" } -> error = "Signed. The upload did not finish."

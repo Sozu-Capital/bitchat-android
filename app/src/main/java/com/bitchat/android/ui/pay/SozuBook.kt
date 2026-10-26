@@ -7,6 +7,7 @@ import android.content.Context
  * A cheque is reserved before it is signed. The same note cannot be reserved twice.
  * Amount plus fee cannot pass the remaining collateral. Chain settlement keeps the hold.
  * A chain reply of note-used keeps it too: the note was spent by the first upload.
+ * Waiting for the passkey keeps the hold. The amount stays reserved until the vault accepts it.
  * Any other rejection gives the collateral back.
  */
 class SozuBook(
@@ -76,6 +77,7 @@ class SozuBook(
         when (reason) {
             "settled" -> holds[index] = holds[index].copy(state = SETTLED)
             "note-used" -> holds[index] = holds[index].copy(state = USED)
+            "passkey" -> Unit
             else -> holds.removeAt(index)
         }
     }
