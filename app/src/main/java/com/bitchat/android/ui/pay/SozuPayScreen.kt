@@ -78,8 +78,11 @@ fun SozuPayScreen(
     val meshMessages by viewModel.messages.collectAsStateWithLifecycle()
     val privateChats by viewModel.privateChats.collectAsStateWithLifecycle()
     var owner by remember { mutableStateOf(SozuWallet.loadOrCreate(context)) }
+    var linked by remember {
+        mutableStateOf(prefs.getString("linked", null)?.let(::isValidStellarAddress) == true)
+    }
+    var network by remember { mutableStateOf<List<SozuNetworkTx>>(emptyList()) }
     var myTag by remember { mutableStateOf(SozuTag.current(context).orEmpty()) }
-    val announced = remember { mutableSetOf<String>() }
 
     var digits by remember { mutableStateOf("") }
     var depositDigits by remember { mutableStateOf("") }
@@ -199,6 +202,7 @@ fun SozuPayScreen(
         val link = parseSozuLink(raw) ?: return@LaunchedEffect
         SozuWallet.useWebWallet(context, link.address)
         owner = link.address
+        linked = true
         val linkedTag = link.tag
         if (linkedTag != null) {
             SozuTag.choose(context, linkedTag)
@@ -221,14 +225,26 @@ fun SozuPayScreen(
         error = null
     }
 
+    LaunchedEffect(Unit) {
+        while (true) {
+            val next = withContext(Dispatchers.IO) {
+                runCatching { SozuPending.fetchNetwork() }.getOrDefault(emptyList())
+            }
+            network = next
+            kotlinx.coroutines.delay(15_000)
+        }
+    }
+
     LaunchedEffect(peers, owner, myTag) {
         if (!isValidStellarAddress(owner)) return@LaunchedEffect
         val line = if (myTag.isNotBlank()) "sozu-wallet:$owner\nsozu-tag:$myTag" else "sozu-wallet:$owner"
-        peers.forEach { peer ->
-            if (!announced.add("$peer:$owner")) return@forEach
-            viewModel.sendToPeer(peer, line) { accepted ->
-                if (!accepted) announced.remove("$peer:$owner")
+        while (true) {
+            peers.forEach { peer ->
+                val known = prefs.getString("payee:$peer", null)?.takeIf(::isValidStellarAddress)
+                if (known != null) return@forEach
+                viewModel.sendToPeer(peer, line) { }
             }
+            kotlinx.coroutines.delay(4_000)
         }
     }
 
@@ -259,7 +275,7 @@ fun SozuPayScreen(
     LaunchedEffect(initialPeer) {
         val peer = initialPeer ?: return@LaunchedEffect
         selected = peer
-        payee = prefs.getString("payee:$peer", "") ?: ""
+        payee = prefs.getString("payee:$peer", null)?.takeIf(::isValidStellarAddress).orEmpty()
         digits = ""
         error = null
         status = null
@@ -351,7 +367,9 @@ fun SozuPayScreen(
     if (selected == null) {
         LedgerHome(
             owner = owner,
+            linked = linked,
             tag = myTag,
+            network = network,
             offlineMinor = remember(ledgerTick) { book.remaining() },
             walletMinor = balanceMinor,
             depositDigits = depositDigits,
@@ -394,7 +412,7 @@ fun SozuPayScreen(
             onOpenChat = onOpenChat,
             onPick = { peerId ->
                 selected = peerId
-                payee = prefs.getString("payee:$peerId", "") ?: ""
+                payee = prefs.getString("payee:$peerId", null)?.takeIf(::isValidStellarAddress).orEmpty()
                 digits = ""
                 error = null
                 status = null
@@ -613,7 +631,9 @@ fun SozuPayScreen(
 @Composable
 private fun LedgerHome(
     owner: String,
+    linked: Boolean,
     tag: String,
+    network: List<SozuNetworkTx>,
     offlineMinor: Long,
     walletMinor: Long?,
     depositDigits: String,
@@ -661,7 +681,11 @@ private fun LedgerHome(
             fontSize = 13.sp,
         )
         Text(
-            text = if (owner.isBlank()) "Open your Sozu wallet on dev.sozu.capital" else "Wallet ${shortAddress(owner)}",
+            text = when {
+                owner.isBlank() -> "Open your Sozu wallet on dev.sozu.capital"
+                !linked -> "Link this phone from dev.sozu.capital/offline"
+                else -> "Wallet ${shortAddress(owner)}"
+            },
             color = Color.White.copy(alpha = 0.7f),
             fontSize = 14.sp,
             modifier = Modifier.padding(top = 12.dp).clickable {
@@ -750,6 +774,39 @@ private fun LedgerHome(
                     )
                 }
                 Text(formatMinorUnits(row.amount), color = Color.White, fontSize = 16.sp)
+            }
+        }
+        Text(
+            text = "On testnet",
+            color = Color.White,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 28.dp, bottom = 8.dp),
+        )
+        if (network.isEmpty()) {
+            Text("No uploaded payments yet", color = Color.White.copy(alpha = 0.45f), fontSize = 14.sp)
+        }
+        network.take(12).forEach { tx ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .clickable {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://stellar.expert/explorer/testnet/tx/${tx.hash}"),
+                                ),
+                            )
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(tx.label, color = Color.White, fontSize = 14.sp)
+                    Text(tx.hash.take(8), color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp)
+                }
             }
         }
         Text(

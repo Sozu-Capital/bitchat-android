@@ -11,6 +11,8 @@ import java.net.URL
 
 data class SozuUpload(val frame: String, val hash: String?, val reason: String)
 
+data class SozuNetworkTx(val hash: String, val label: String)
+
 data class FlushReport(val hash: String?, val uploads: List<SozuUpload>)
 
 /** Cheques signed offline. The first phone with a connection submits them. */
@@ -65,6 +67,33 @@ object SozuPending {
         prefs.edit().putString("pending", left.toString()).apply()
         Log.i("SozuPay", "flush uploads=${uploads.size} left=${left.length()} hash=${hash ?: "-"}")
         return FlushReport(hash, uploads)
+    }
+
+    /** Latest vault settlements. Every phone reads the same list. */
+    fun fetchNetwork(): List<SozuNetworkTx> {
+        val connection = (URL("https://dev.sozu.capital/api/offline/ledger").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8000
+            readTimeout = 8000
+            setRequestProperty("Accept", "application/json")
+        }
+        return try {
+            if (connection.responseCode !in 200..299) return emptyList()
+            val txs = JSONObject(connection.inputStream.bufferedReader().readText()).optJSONArray("txs") ?: return emptyList()
+            val out = ArrayList<SozuNetworkTx>(txs.length())
+            for (i in 0 until txs.length()) {
+                val row = txs.optJSONObject(i) ?: continue
+                val hash = row.optString("hash")
+                if (hash.length < 16) continue
+                val label = row.optString("label").ifBlank { "On testnet" }
+                out.add(SozuNetworkTx(hash, label))
+            }
+            out
+        } catch (_: Exception) {
+            emptyList()
+        } finally {
+            connection.disconnect()
+        }
     }
 
     /** USDC on the same passkey account dev.sozu.capital shows. Null when the phone cannot read it. */

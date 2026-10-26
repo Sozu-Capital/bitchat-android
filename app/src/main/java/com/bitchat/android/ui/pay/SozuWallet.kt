@@ -24,6 +24,8 @@ object SozuWallet {
             prefs.edit().putString("account", linked).putString("owner", linked).apply()
             return linked
         }
+        val saved = prefs.getString("account", null)?.takeIf(::isValidStellarAddress)
+        if (saved != null) return saved
         val contractId = MessageDigest.getInstance("SHA-256").digest(signer.compressedPublicKey())
         val account = StellarStrKey.encodeContract(contractId)
         prefs.edit()
