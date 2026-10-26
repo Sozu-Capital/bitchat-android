@@ -46,6 +46,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bitchat.android.ui.ChatViewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -112,14 +115,29 @@ fun SozuPayScreen(
         }
         persistBook()
         when {
-            report.uploads.any { it.reason == "note-used" } -> error = "Note already used"
+            report.hash != null -> {
+                error = null
+                status = "Submitted. ${report.hash.take(8)}"
+                prefs.edit().remove("handed-frame").apply()
+            }
+            report.uploads.any { it.reason == "note-used" } -> {
+                error = null
+                status = "On testnet."
+                prefs.edit().remove("handed-frame").apply()
+            }
             report.uploads.any { it.reason == "collateral" } -> error = "Over your offline limit"
-            report.hash != null -> status = "Submitted."
             report.uploads.any { it.reason == "passkey" } -> {
                 val frame = report.uploads.first { it.reason == "passkey" }.frame
-                status = "Confirm with your passkey. This amount stays reserved."
-                if (prefs.getString("handed-frame", null) != frame) {
-                    prefs.edit().putString("handed-frame", frame).apply()
+                status = "Tap Sign with passkey. This amount stays reserved."
+                val open = synchronized(prefs) {
+                    if (prefs.getString("handed-frame", null) == frame) {
+                        false
+                    } else {
+                        prefs.edit().putString("handed-frame", frame).commit()
+                        true
+                    }
+                }
+                if (open) {
                     runCatching {
                         context.startActivity(
                             Intent(
@@ -267,6 +285,10 @@ fun SozuPayScreen(
                     showFlush(report)
                 }
             }
+
+            override fun onLost(network: Network) {
+                prefs.edit().remove("handed-frame").commit()
+            }
         }
         var registered = false
         if (manager != null) {
@@ -277,6 +299,32 @@ fun SozuPayScreen(
         }
         onDispose {
             if (registered) runCatching { manager?.unregisterNetworkCallback(callback) }
+        }
+    }
+
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, owner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event != Lifecycle.Event.ON_RESUME || !isValidStellarAddress(owner)) return@LifecycleEventObserver
+            scope.launch {
+                val report = withContext(Dispatchers.IO) { SozuPending.flush(context, owner) }
+                showFlush(report)
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    fun openSettlement(frame: String) {
+        if (!frame.startsWith("SOZU1:")) return
+        prefs.edit().putString("handed-frame", frame).commit()
+        runCatching {
+            context.startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://dev.sozu.capital/offline?frame=${Uri.encode(frame)}"),
+                ),
+            )
         }
     }
 
@@ -338,6 +386,7 @@ fun SozuPayScreen(
                 }
             },
             payments = remember(ledgerTick, owner) { SozuLedger.rows(context, book, owner) },
+            onUpload = { row -> row.frame?.let(::openSettlement) },
             note = error ?: status,
             noteIsError = error != null,
             peers = peers,
@@ -571,6 +620,7 @@ private fun LedgerHome(
     onDepositDigit: (String) -> Unit,
     onDeposit: () -> Unit,
     payments: List<SozuLedgerRow>,
+    onUpload: (SozuLedgerRow) -> Unit,
     note: String?,
     noteIsError: Boolean,
     peers: List<String>,
@@ -678,8 +728,12 @@ private fun LedgerHome(
         }
         payments.forEach { row ->
             val who = row.who.takeIf(::isValidStellarAddress)?.let(::shortAddress) ?: "Someone"
+            val upload = !row.incoming && row.state == "pending" && row.frame?.startsWith("SOZU1:") == true
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp)
+                    .then(if (upload) Modifier.clickable { onUpload(row) } else Modifier),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -689,8 +743,8 @@ private fun LedgerHome(
                         fontSize = 16.sp,
                     )
                     Text(
-                        text = paymentState(row.state),
-                        color = Color.White.copy(alpha = 0.45f),
+                        text = if (upload) "Tap to upload" else paymentState(row.state),
+                        color = if (upload) Color.White else Color.White.copy(alpha = 0.45f),
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 2.dp),
                     )
@@ -732,8 +786,8 @@ private fun LedgerHome(
 }
 
 private fun paymentState(state: String): String = when (state) {
-    "settled" -> "Settled"
-    "used" -> "Already used"
+    "settled" -> "On testnet"
+    "used" -> "On testnet"
     else -> "Pending"
 }
 

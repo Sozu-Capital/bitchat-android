@@ -160,6 +160,7 @@ data class SozuLedgerRow(
     val incoming: Boolean,
     val who: String,
     val state: String,
+    val frame: String? = null,
 )
 
 object SozuInbox {
@@ -191,7 +192,7 @@ object SozuLedger {
     fun rows(context: Context, book: SozuBook, owner: String): List<SozuLedgerRow> {
         val outgoing = book.payments().asReversed().map { hold ->
             val who = hold.frame?.let(SozuCheque::read)?.let { StellarStrKey.encodeContract(it.payee) }.orEmpty()
-            SozuLedgerRow(hold.id, hold.amount, false, who, hold.state)
+            SozuLedgerRow(hold.id, hold.amount, false, who, hold.state, hold.frame)
         }
         val seen = outgoing.map { it.id }.toSet()
         return outgoing + SozuInbox.list(context).filter { it.id !in seen }
