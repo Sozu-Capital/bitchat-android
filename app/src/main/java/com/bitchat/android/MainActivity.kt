@@ -323,7 +323,7 @@ class MainActivity : OrientationAwareActivity() {
                 var showPay by remember { mutableStateOf(true) }
                 if (showPay) {
                     SozuPayScreen(
-                        onSend = { body, done -> chatViewModel.sendMessage(body, done) },
+                        viewModel = chatViewModel,
                         onOpenChat = { showPay = false },
                     )
                 } else {
