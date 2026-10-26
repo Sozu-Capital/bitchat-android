@@ -23,6 +23,10 @@ class DeviceChequeSigner(private val activity: Activity) {
     private val alias = "sozu-device-p256"
     private val executor = Executors.newSingleThreadExecutor()
 
+    fun prepare() {
+        ensureKey()
+    }
+
     fun compressedPublicKey(): ByteArray {
         ensureKey()
         val cert = keyStore().getCertificate(alias)

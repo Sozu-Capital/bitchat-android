@@ -51,6 +51,8 @@ private val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", 
 @Composable
 fun SozuPayScreen(
     viewModel: ChatViewModel,
+    initialPeer: String? = null,
+    onPayPeerOpened: () -> Unit = {},
     onOpenChat: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -121,6 +123,16 @@ fun SozuPayScreen(
         }
     }
 
+    LaunchedEffect(initialPeer) {
+        val peer = initialPeer ?: return@LaunchedEffect
+        selected = peer
+        payee = prefs.getString("payee:$peer", "") ?: ""
+        digits = ""
+        error = null
+        status = null
+        onPayPeerOpened()
+    }
+
     if (scanning) {
         QrOverlay(
             granted = camera.status.isGranted,
@@ -134,117 +146,68 @@ fun SozuPayScreen(
         return
     }
 
+    if (selected == null) {
+        PeopleHome(
+            owner = owner,
+            peers = peers,
+            names = names,
+            onOpenChat = onOpenChat,
+            onPick = { peerId ->
+                selected = peerId
+                payee = prefs.getString("payee:$peerId", "") ?: ""
+                digits = ""
+                error = null
+                status = null
+            },
+        )
+        return
+    }
+
+    val peerId = selected ?: return
+    val label = names[peerId]?.takeIf { it.isNotBlank() } ?: "Nearby"
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .statusBarsPadding()
-            .navigationBarsPadding()
             .padding(horizontal = 20.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(top = 12.dp),
+            modifier = Modifier.padding(top = 4.dp),
         ) {
+            TextButton(onClick = {
+                selected = null
+                digits = ""
+                error = null
+                status = null
+            }) { Text("Back", color = Color.White.copy(alpha = 0.7f)) }
             Text(
-                text = "SOZU",
-                color = Color.White.copy(alpha = 0.45f),
-                fontSize = 12.sp,
-                letterSpacing = 2.sp,
+                text = label,
+                color = Color.White,
+                fontSize = 16.sp,
                 modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Center,
             )
             Text(
                 text = shortAddress(owner),
-                color = Color.White.copy(alpha = 0.45f),
+                color = Color.White.copy(alpha = 0.4f),
                 fontSize = 12.sp,
             )
-            TextButton(onClick = onOpenChat) {
-                Text("Chat", color = Color.White.copy(alpha = 0.4f))
-            }
         }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (peers.isEmpty()) {
-                Text(
-                    text = "Looking for people nearby",
-                    color = Color.White.copy(alpha = 0.4f),
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(vertical = 24.dp),
-                )
-            }
-            peers.forEach { peerId ->
-                val label = names[peerId]?.takeIf { it.isNotBlank() } ?: peerId.take(4)
-                val on = peerId == selected
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .padding(end = 16.dp)
-                        .clickable {
-                            selected = peerId
-                            payee = prefs.getString("payee:$peerId", "") ?: ""
-                            error = null
-                            status = null
-                        },
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(68.dp)
-                            .clip(CircleShape)
-                            .background(if (on) Color.White else Color.White.copy(alpha = 0.14f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = label.take(1).uppercase(),
-                            color = if (on) Color.Black else Color.White,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    Text(
-                        text = label.take(12),
-                        color = Color.White.copy(alpha = if (on) 1f else 0.55f),
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                }
-            }
-        }
-
         Text(
             text = formatCents(cents),
             color = Color.White,
-            fontSize = 52.sp,
+            fontSize = 48.sp,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 18.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
         Text(
-            text = selected?.let { names[it] ?: "Nearby" } ?: "Tap someone",
-            color = Color.White.copy(alpha = 0.4f),
+            text = if (payeeOk != null) shortAddress(payeeOk) else "Waiting for their wallet",
+            color = Color.White.copy(alpha = 0.45f),
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            text = when {
-                payeeOk != null -> shortAddress(payeeOk)
-                selected != null -> "Waiting for their wallet"
-                else -> "Tap someone"
-            },
-            color = Color.White.copy(alpha = 0.45f),
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
         )
         val note = error ?: status
         if (note != null) {
@@ -253,31 +216,16 @@ fun SozuPayScreen(
                 color = if (error != null) Color(0xFFC4552A) else Color.White.copy(alpha = 0.55f),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
         }
-
-        Row(modifier = Modifier.fillMaxWidth()) {
-            TextButton(onClick = {
-                val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                    .primaryClip?.getItemAt(0)?.text?.toString()
-                if (clip.isNullOrBlank()) error = "Clipboard is empty" else applyInput(clip)
-            }) { Text("Paste", color = Color.White) }
-            TextButton(onClick = { scanning = true }) { Text("QR", color = Color.White) }
-        }
-
         Spacer(modifier = Modifier.weight(1f))
-
         Column(modifier = Modifier.fillMaxWidth()) {
             keys.chunked(3).forEach { row ->
                 Row(modifier = Modifier.fillMaxWidth()) {
                     row.forEach { key ->
                         Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp),
+                            modifier = Modifier.weight(1f).height(48.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             when (key) {
@@ -295,13 +243,11 @@ fun SozuPayScreen(
                 }
             }
         }
-
         TextButton(
             onClick = {
-                val peer = selected ?: return@TextButton
                 val activity = context as? Activity
                 if (activity == null || ownerOk == null || payeeOk == null) {
-                    error = "Paste both Stellar addresses"
+                    error = if (payeeOk == null) "Waiting for their wallet" else "Wallet is not ready"
                     return@TextButton
                 }
                 sending = true
@@ -327,7 +273,7 @@ fun SozuPayScreen(
                             deviceKey = signer.compressedPublicKey(),
                         )
                         val frame = SozuCheque.frame(body + signer.sign(body))
-                        viewModel.sendToPeer(peer, frame) { accepted ->
+                        viewModel.sendToPeer(peerId, frame) { accepted ->
                             sending = false
                             if (accepted) {
                                 digits = ""
@@ -346,7 +292,7 @@ fun SozuPayScreen(
             enabled = canSend,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 4.dp, bottom = 8.dp)
+                .padding(top = 4.dp, bottom = 12.dp)
                 .background(
                     if (canSend) Color.White else Color.White.copy(alpha = 0.2f),
                     RoundedCornerShape(28.dp),
@@ -357,8 +303,66 @@ fun SozuPayScreen(
                 color = Color.Black,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(vertical = 6.dp),
+                modifier = Modifier.padding(vertical = 8.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun PeopleHome(
+    owner: String,
+    peers: List<String>,
+    names: Map<String, String>,
+    onOpenChat: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(horizontal = 20.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            Text(
+                text = "SOZU",
+                color = Color.White.copy(alpha = 0.45f),
+                fontSize = 12.sp,
+                letterSpacing = 2.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Text(text = shortAddress(owner), color = Color.White.copy(alpha = 0.45f), fontSize = 12.sp)
+            TextButton(onClick = onOpenChat) { Text("Chat", color = Color.White.copy(alpha = 0.4f)) }
+        }
+        Text(
+            text = if (peers.isEmpty()) "Looking for people nearby" else "Tap someone to pay",
+            color = Color.White,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 28.dp, bottom = 20.dp),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            peers.forEach { peerId ->
+                val label = names[peerId]?.takeIf { it.isNotBlank() } ?: peerId.take(4)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(end = 18.dp).clickable { onPick(peerId) },
+                ) {
+                    Box(
+                        modifier = Modifier.size(76.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(label.take(1).uppercase(), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Text(label.take(12), color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
         }
     }
 }

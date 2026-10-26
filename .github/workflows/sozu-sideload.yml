@@ -48,6 +48,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="sozu-apk-0.1.3"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "${{ github.sha }}" --title "Sozu offline pay 0.1.3" --notes "Installs beside bitchat. Creates a Stellar wallet on first open and sends a cheque when you tap someone nearby."
+          tag="sozu-apk-0.1.4"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "${{ github.sha }}" --title "Sozu offline pay 0.1.4" --notes "Tap a nearby person to open the keypad. One permission screen, then a choice to upload cheques and earn respect. The passkey is created on first open."
           gh release upload "$tag" sozu-offline-pay.apk --clobber

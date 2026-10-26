@@ -1363,6 +1363,13 @@ class ChatViewModel(
         state.setShowMeshPeerList(false)
     }
 
+    var onMeshPay: ((String) -> Unit)? = null
+
+    fun payMeshPeer(peerID: String) {
+        val pay = onMeshPay
+        if (pay != null) pay(peerID) else showPrivateChatSheet(peerID)
+    }
+
     fun showPrivateChatSheet(peerID: String) {
         val conversationID = ContactDirectory.canonicalConversationId(peerID)
         state.setPrivateChatSheetPeer(conversationID)

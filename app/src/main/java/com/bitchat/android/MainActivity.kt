@@ -47,6 +47,10 @@ import com.bitchat.android.onboarding.PermissionExplanationScreen
 import com.bitchat.android.onboarding.PermissionManager
 import com.bitchat.android.ui.ChatScreen
 import com.bitchat.android.ui.ChatViewModel
+import com.bitchat.android.ui.pay.SozuAccessScreen
+import com.bitchat.android.ui.pay.SozuDeviceKey
+import com.bitchat.android.ui.pay.SozuNode
+import com.bitchat.android.ui.pay.SozuNodeScreen
 import com.bitchat.android.ui.pay.SozuPayScreen
 import com.bitchat.android.ui.OrientationAwareActivity
 import com.bitchat.android.ui.theme.BitchatTheme
@@ -163,6 +167,7 @@ class MainActivity : OrientationAwareActivity() {
         
         setContent {
             BitchatTheme {
+                SozuDeviceKey()
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = MaterialTheme.colorScheme.background
@@ -236,119 +241,85 @@ class MainActivity : OrientationAwareActivity() {
         }
 
         when (onboardingState) {
-            OnboardingState.PERMISSION_REQUESTING -> {
+            OnboardingState.PERMISSION_EXPLANATION,
+            OnboardingState.PERMISSION_REQUESTING,
+            OnboardingState.BACKGROUND_LOCATION_EXPLANATION,
+            OnboardingState.BLUETOOTH_CHECK,
+            OnboardingState.LOCATION_CHECK,
+            OnboardingState.BATTERY_OPTIMIZATION_CHECK -> {
+                SozuAccessScreen(
+                    busy = onboardingState == OnboardingState.PERMISSION_REQUESTING,
+                    onContinue = {
+                        when (onboardingState) {
+                            OnboardingState.PERMISSION_EXPLANATION -> {
+                                mainViewModel.updateOnboardingState(OnboardingState.PERMISSION_REQUESTING)
+                                onboardingCoordinator.requestPermissions()
+                            }
+                            OnboardingState.BACKGROUND_LOCATION_EXPLANATION -> {
+                                onboardingCoordinator.requestBackgroundLocation()
+                            }
+                            OnboardingState.BLUETOOTH_CHECK -> {
+                                mainViewModel.updateBluetoothLoading(true)
+                                bluetoothStatusManager.requestEnableBluetooth()
+                            }
+                            OnboardingState.LOCATION_CHECK -> {
+                                mainViewModel.updateLocationLoading(true)
+                                locationStatusManager.requestEnableLocation()
+                            }
+                            OnboardingState.BATTERY_OPTIMIZATION_CHECK -> {
+                                batteryOptimizationManager.requestDisableBatteryOptimization()
+                            }
+                            else -> Unit
+                        }
+                    },
+                )
+            }
+
+            OnboardingState.CHECKING, OnboardingState.INITIALIZING -> {
                 InitializingScreen(modifier)
             }
-            
-            OnboardingState.BLUETOOTH_CHECK -> {
-                BluetoothCheckScreen(
-                    modifier = modifier,
-                    status = bluetoothStatus,
-                    onEnableBluetooth = {
-                        mainViewModel.updateBluetoothLoading(true)
-                        bluetoothStatusManager.requestEnableBluetooth()
-                    },
-                    onRetry = {
-                        checkBluetoothAndProceed()
-                    },
-                    onSkip = {
-                        mainViewModel.skipBluetoothCheck()
-                        checkLocationAndProceed()
-                    },
-                    isLoading = isBluetoothLoading
-                )
-            }
-            
-            OnboardingState.LOCATION_CHECK -> {
-                LocationCheckScreen(
-                    modifier = modifier,
-                    status = locationStatus,
-                    onEnableLocation = {
-                        mainViewModel.updateLocationLoading(true)
-                        locationStatusManager.requestEnableLocation()
-                    },
-                    onRetry = {
-                        checkLocationAndProceed()
-                    },
-                    isLoading = isLocationLoading
-                )
-            }
-            
-            OnboardingState.BATTERY_OPTIMIZATION_CHECK -> {
-                BatteryOptimizationScreen(
-                    modifier = modifier,
-                    status = batteryOptimizationStatus,
-                    onDisableBatteryOptimization = {
-                        mainViewModel.updateBatteryOptimizationLoading(true)
-                        batteryOptimizationManager.requestDisableBatteryOptimization()
-                    },
-                    onRetry = {
-                        checkBatteryOptimizationAndProceed()
-                    },
-                    onSkip = {
-                        // Skip battery optimization and proceed
-                        proceedWithPermissionCheck()
-                    },
-                    isLoading = isBatteryOptimizationLoading
-                )
-            }
-            
-            OnboardingState.PERMISSION_EXPLANATION -> {
-                PermissionExplanationScreen(
-                    modifier = modifier,
-                    permissionCategories = permissionManager.getCategorizedPermissions(),
-                    onContinue = {
-                        mainViewModel.updateOnboardingState(OnboardingState.PERMISSION_REQUESTING)
-                        onboardingCoordinator.requestPermissions()
-                    }
-                )
-            }
 
-            OnboardingState.BACKGROUND_LOCATION_EXPLANATION -> {
-                BackgroundLocationPermissionScreen(
-                    modifier = modifier,
-                    onContinue = {
-                        onboardingCoordinator.requestBackgroundLocation()
-                    },
-                    onRetry = {
-                        onboardingCoordinator.checkBackgroundLocationAndProceed()
-                    },
-                    onSkip = {
-                        onboardingCoordinator.skipBackgroundLocation()
-                    }
-                )
-            }
-
-            OnboardingState.CHECKING, OnboardingState.INITIALIZING, OnboardingState.COMPLETE -> {
+            OnboardingState.COMPLETE -> {
+                val context = LocalContext.current
+                var nodeDecided by remember { mutableStateOf(SozuNode.decided(context)) }
+                if (!nodeDecided) {
+                    SozuNodeScreen(
+                        onJoin = {
+                            SozuNode.choose(context, true)
+                            nodeDecided = true
+                        },
+                        onSkip = {
+                            SozuNode.choose(context, false)
+                            nodeDecided = true
+                        },
+                    )
+                } else {
                 var showPay by remember { mutableStateOf(true) }
+                var payPeer by remember { mutableStateOf<String?>(null) }
+                DisposableEffect(chatViewModel) {
+                    chatViewModel.onMeshPay = { id ->
+                        payPeer = id
+                        showPay = true
+                    }
+                    onDispose { chatViewModel.onMeshPay = null }
+                }
                 if (showPay) {
                     SozuPayScreen(
                         viewModel = chatViewModel,
+                        initialPeer = payPeer,
+                        onPayPeerOpened = { payPeer = null },
                         onOpenChat = { showPay = false },
                     )
                 } else {
                     val backCallback = object : OnBackPressedCallback(true) {
                         override fun handleOnBackPressed() {
                             val handled = chatViewModel.handleBackPressed()
-                            if (!handled) {
-                                this.isEnabled = false
-                                onBackPressedDispatcher.onBackPressed()
-                                this.isEnabled = true
-                            }
+                            if (!handled) showPay = true
                         }
                     }
                     onBackPressedDispatcher.addCallback(this, backCallback)
-                    Column(Modifier.fillMaxSize()) {
-                        TextButton(
-                            onClick = { showPay = true },
-                            modifier = Modifier.align(Alignment.End),
-                        ) {
-                            Text("Pay")
-                        }
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
-                            ChatScreen(viewModel = chatViewModel)
-                        }
-                    }
+                    ChatScreen(viewModel = chatViewModel)
+                }
                 }
             }
             
