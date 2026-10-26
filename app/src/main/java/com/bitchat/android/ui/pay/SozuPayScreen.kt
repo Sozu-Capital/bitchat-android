@@ -185,9 +185,13 @@ fun SozuPayScreen(
             viewModel.setNickname(linkedTag)
         }
         if (link.minor > 0L) {
-            depositDigits = (link.minor / 100_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toString()
+            book.collateral = link.minor
+            persistBook()
+            depositDigits = ""
+            status = "${formatMinorUnits(link.minor)} is offline."
+        } else {
+            status = "Sozu wallet linked."
         }
-        status = "Sozu wallet linked. Deposit an amount into offline."
         scope.launch {
             val minor = withContext(Dispatchers.IO) { SozuPending.fetchBalanceMinor(link.address) } ?: return@launch
             prefs.edit().putLong("balance-minor", minor).apply()
