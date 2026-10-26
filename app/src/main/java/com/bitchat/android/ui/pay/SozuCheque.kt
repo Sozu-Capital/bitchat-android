@@ -107,6 +107,32 @@ object StellarStrKey {
         return decoded.copyOfRange(1, 33)
     }
 
+    fun encodeAccount(publicKey: ByteArray): String {
+        require(publicKey.size == 32)
+        val payload = ByteArray(33)
+        payload[0] = 48
+        publicKey.copyInto(payload, 1)
+        val crc = crc16(payload)
+        val withCrc = payload + byteArrayOf((crc and 0xff).toByte(), ((crc shr 8) and 0xff).toByte())
+        return base32(withCrc)
+    }
+
+    private fun base32(data: ByteArray): String {
+        var bits = 0
+        var value = 0
+        val out = StringBuilder()
+        for (b in data) {
+            value = (value shl 8) or (b.toInt() and 0xff)
+            bits += 8
+            while (bits >= 5) {
+                bits -= 5
+                out.append(ALPHABET[(value shr bits) and 31])
+            }
+        }
+        if (bits > 0) out.append(ALPHABET[(value shl (5 - bits)) and 31])
+        return out.toString()
+    }
+
     private fun decode(text: String): ByteArray? {
         if (text.isEmpty()) return null
         var bits = 0

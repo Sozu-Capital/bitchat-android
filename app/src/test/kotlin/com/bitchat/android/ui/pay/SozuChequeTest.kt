@@ -14,6 +14,15 @@ class SozuChequeTest {
     }
 
     @Test
+    fun encodesTheKnownAccount() {
+        val raw = "3b9911380efe988ba0a8900eb1cfe44f366f7dbe946bed077240f7f624df15c5"
+            .chunked(2)
+            .map { it.toInt(16).toByte() }
+            .toByteArray()
+        assertEquals("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", StellarStrKey.encodeAccount(raw))
+    }
+
+    @Test
     fun vaultIsTheTestnetContract() {
         val id = SozuCheque.vaultId()
         assertEquals(32, id.size)

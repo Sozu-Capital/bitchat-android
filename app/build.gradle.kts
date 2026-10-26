@@ -30,8 +30,8 @@ android {
         applicationId = "capital.sozu.mesh"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 42
-        versionName = "2.0.5-sozu"
+        versionCode = 43
+        versionName = "2.0.6-sozu"
         buildConfigField(
             "String",
             "GITHUB_RELEASE_CERT_SHA256",

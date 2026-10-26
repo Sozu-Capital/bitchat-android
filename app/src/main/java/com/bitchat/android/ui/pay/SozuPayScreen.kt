@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,10 +59,13 @@ fun SozuPayScreen(
     val prefs = remember { context.getSharedPreferences("sozu-pay", Context.MODE_PRIVATE) }
     val peers by viewModel.connectedPeers.collectAsStateWithLifecycle()
     val names by viewModel.peerNicknames.collectAsStateWithLifecycle()
+    val meshMessages by viewModel.messages.collectAsStateWithLifecycle()
+    val privateChats by viewModel.privateChats.collectAsStateWithLifecycle()
+    val owner = remember { SozuWallet.loadOrCreate(context) }
+    val announced = remember { mutableSetOf<String>() }
 
     var digits by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<String?>(null) }
-    var owner by remember { mutableStateOf(prefs.getString("owner", "") ?: "") }
     var payee by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -86,18 +90,35 @@ fun SozuPayScreen(
             return
         }
         val peer = selected
-        if (peer != null && payeeOk == null) {
-            rememberPayee(peer, address)
-        } else if (ownerOk == null) {
-            owner = address
-            prefs.edit().putString("owner", address).apply()
-        } else if (peer != null) {
-            rememberPayee(peer, address)
-        } else {
-            owner = address
-            prefs.edit().putString("owner", address).apply()
+        if (peer == null) {
+            error = "Tap someone first"
+            return
         }
+        rememberPayee(peer, address)
         error = null
+    }
+
+    LaunchedEffect(peers, owner) {
+        peers.forEach { peer ->
+            if (!announced.add(peer)) return@forEach
+            viewModel.sendToPeer(peer, "sozu-wallet:$owner") { accepted ->
+                if (!accepted) announced.remove(peer)
+            }
+        }
+    }
+
+    LaunchedEffect(meshMessages, privateChats, selected) {
+        val mine = viewModel.myPeerID
+        fun learn(peerId: String?, content: String) {
+            if (peerId.isNullOrBlank() || peerId == mine) return
+            val address = SozuWallet.addressFromMeshText(content) ?: return
+            prefs.edit().putString("payee:$peerId", address).apply()
+            if (selected == peerId) payee = address
+        }
+        meshMessages.forEach { learn(it.senderPeerID, it.content) }
+        privateChats.forEach { (_, items) ->
+            items.forEach { learn(it.senderPeerID, it.content) }
+        }
     }
 
     if (scanning) {
@@ -131,6 +152,11 @@ fun SozuPayScreen(
                 fontSize = 12.sp,
                 letterSpacing = 2.sp,
                 modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = shortAddress(owner),
+                color = Color.White.copy(alpha = 0.45f),
+                fontSize = 12.sp,
             )
             TextButton(onClick = onOpenChat) {
                 Text("Chat", color = Color.White.copy(alpha = 0.4f))
@@ -210,8 +236,8 @@ fun SozuPayScreen(
         Text(
             text = when {
                 payeeOk != null -> shortAddress(payeeOk)
-                selected != null -> "Paste their Stellar address"
-                else -> ownerOk?.let { "You ${shortAddress(it)}" } ?: "Paste your Stellar address"
+                selected != null -> "Waiting for their wallet"
+                else -> "Tap someone"
             },
             color = Color.White.copy(alpha = 0.45f),
             fontSize = 12.sp,
